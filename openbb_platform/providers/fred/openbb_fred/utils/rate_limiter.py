@@ -161,6 +161,8 @@ async def _fetch(
             return await response_callback(response, session)
         payload = await response.json()
         _check_payload_rate_limit(payload)
+        from openbb_fred.utils.response import validate_response
+        validate_response(payload, status)
         return payload
 
     attempt = 0

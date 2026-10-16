@@ -122,6 +122,7 @@ class FredSeriesFetcher(
 
         from openbb_fred.utils.api import build_url
         from openbb_fred.utils.rate_limiter import fred_get
+        from openbb_fred.utils.response import observations
 
         api_key = credentials.get("fred_api_key") if credentials else ""
         params = query.model_dump(exclude_none=True)
@@ -147,23 +148,18 @@ class FredSeriesFetcher(
                 if isinstance(metadata_response, dict)
                 else {}
             ) or {}
-            observations = (
-                observations_response.get("observations")
-                if isinstance(observations_response, dict)
-                else []
-            ) or []
+            rows = observations(observations_response)
 
             try:
-                for d in observations:
+                for d in rows:
                     d.pop("realtime_start")
                     d.pop("realtime_end")
 
                 data = (
-                    DataFrame(observations)
+                    DataFrame(rows)
                     .replace(".", None)
                     .set_index("date")["value"]
                     .astype(float)
-                    .dropna()
                     .to_dict()
                 )
             except (KeyError, TypeError):
@@ -190,11 +186,11 @@ class FredSeriesFetcher(
                 if result:
                     results.append(result)
             return results
-        except OpenBBError:
-            raise
-        except Exception as e:
-            message = str(e) or f"FRED request failed ({type(e).__name__})."
-            raise OpenBBError(message) from e
+        except OpenBBError as error:
+            from openbb_fred.utils.response import safe_error
+            raise safe_error(error) from None
+        except Exception:
+            raise OpenBBError("FRED request failed.") from None
 
     @staticmethod
     def transform_data(
