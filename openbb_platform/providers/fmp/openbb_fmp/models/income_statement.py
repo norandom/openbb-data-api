@@ -7,6 +7,7 @@ from datetime import (
     datetime,
 )
 from typing import Any
+from urllib.parse import urlencode
 
 from openbb_core.provider.abstract.fetcher import Fetcher
 from openbb_core.provider.standard_models.income_statement import (
@@ -15,7 +16,8 @@ from openbb_core.provider.standard_models.income_statement import (
 )
 from openbb_core.provider.utils.descriptions import QUERY_DESCRIPTIONS
 from openbb_fmp.utils.definitions import FinancialStatementPeriods
-from pydantic import Field
+from pydantic import Field, field_validator
+
 
 
 class FMPIncomeStatementQueryParams(IncomeStatementQueryParams):
@@ -23,6 +25,12 @@ class FMPIncomeStatementQueryParams(IncomeStatementQueryParams):
 
     Source: https://financialmodelingprep.com/developer/docs/#Income-Statement
     """
+
+    @field_validator("symbol", mode="after")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        """Trim surrounding whitespace without changing ticker punctuation."""
+        return value.strip()
 
     period: FinancialStatementPeriods = Field(
         default="annual",
@@ -242,12 +250,11 @@ class FMPIncomeStatementFetcher(
         if query.period == "ttm":
             base_url += "-ttm"
 
-        url = (
-            base_url
-            + f"?symbol={query.symbol}{'&period=' + query.period if query.period != 'ttm' else ''}"
-            + f"&limit={query.limit if query.limit else 5}"
-            + f"&apikey={api_key}"
-        )
+        params = {"symbol": query.symbol, "limit": query.limit if query.limit is not None else 5,
+                  "apikey": api_key}
+        if query.period != "ttm":
+            params["period"] = query.period
+        url = f"{base_url}?{urlencode(params)}"
 
         return await get_data_many(url, **kwargs)
 
