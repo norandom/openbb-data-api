@@ -4,41 +4,32 @@ from datetime import date
 from functools import lru_cache
 from typing import Any
 
-from openbb_core.app.model.abstract.error import OpenBBError
-from openbb_core.provider.utils.errors import EmptyDataError, UnauthorizedError
+from openbb_core.provider.utils.errors import EmptyDataError
 from openbb_core.provider.utils.helpers import get_querystring
 
 
 async def response_callback(response, _):
-    """Use callback for make_request."""
-    if response.status != 200:
-        msg = await response.text()
-        code = response.status
-        raise UnauthorizedError(f"Unauthorized FMP request -> {code} -> {msg}")
+    """Classify protocol and legacy payload failures without exposing their text."""
+    from openbb_fmp.utils.errors import classify, fail
 
-    data = await response.json()
-
+    category = classify(response.status)
+    if category:
+        fail(category)
+    try:
+        data = await response.json()
+    except Exception:
+        data = None
+        invalid_response = True
+    else:
+        invalid_response = False
+    if invalid_response:
+        fail("invalid_response")
     if isinstance(data, dict):
-        error_message = data.get("Error Message", data.get("error"))
-
-        if error_message is not None:
-            conditions = (
-                "upgrade" in error_message.lower()
-                or "exclusive endpoint" in error_message.lower()
-                or "special endpoint" in error_message.lower()
-                or "premium query parameter" in error_message.lower()
-                or "subscription" in error_message.lower()
-                or "unauthorized" in error_message.lower()
-                or "premium" in error_message.lower()
-            )
-
-            if conditions:
-                raise UnauthorizedError(f"Unauthorized FMP request -> {error_message}")
-
-            raise OpenBBError(
-                f"FMP Error Message -> Status code: {response.status} -> {error_message}"
-            )
-
+        message = data.get("Error Message", data.get("error"))
+        if message is not None:
+            fail(classify(response.status, str(message)) or "upstream")
+    if data == [] or data == {} or data is None:
+        fail("missing_data")
     return data
 
 
@@ -47,7 +38,20 @@ async def get_data(url: str, **kwargs: Any) -> list | dict:
     # pylint: disable=import-outside-toplevel
     from openbb_core.provider.utils.helpers import amake_request
 
-    return await amake_request(url, response_callback=response_callback, **kwargs)
+    from aiohttp import ClientConnectionError
+    from openbb_fmp.utils.errors import FMPError, FMPUnauthorized, FMPEmptyData, fail
+    try:
+        return await amake_request(url, response_callback=response_callback, **kwargs)
+    except TimeoutError:
+        category = "timeout"
+    except (ConnectionError, ClientConnectionError):
+        category = "connection"
+    except (FMPError, FMPUnauthorized, FMPEmptyData):
+        raise
+    except Exception:
+        category = "transport"
+    # Raise outside the handler so the unsafe original exception is not chained.
+    fail(category)
 
 
 async def get_data_urls(urls: list[str], **kwargs: Any) -> list | dict:

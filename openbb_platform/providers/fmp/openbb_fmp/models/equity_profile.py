@@ -138,8 +138,7 @@ class FMPEquityProfileFetcher(
         # pylint: disable=import-outside-toplevel
         import asyncio  # noqa
         import warnings
-        from openbb_core.provider.utils.helpers import amake_request
-        from openbb_fmp.utils.helpers import response_callback
+        from openbb_fmp.utils.helpers import get_data
 
         api_key = credentials.get("fmp_api_key") if credentials else ""
         symbols = query.symbol.split(",")
@@ -151,9 +150,7 @@ class FMPEquityProfileFetcher(
             """Get data for one symbol."""
             params = urlencode({"symbol": symbol, "apikey": api_key})
             url = f"{base_url}profile?{params}"
-            result = await amake_request(
-                url, response_callback=response_callback, **kwargs
-            )
+            result = await get_data(url, **kwargs)
             if not result:
                 warnings.warn(f"Symbol Error: No data found for {symbol}")
 
