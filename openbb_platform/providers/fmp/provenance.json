@@ -11,7 +11,6 @@
     "note": "Release archive has no standalone license or notice. Historical upstream AGPL text retained; release metadata declares AGPL-3.0-only."
   },
   "unchanged_files": {
-    "openbb_fmp/models/equity_profile.py": "36eb9192978e9114fe0c05c7a790aeff87c2c10537a794c1b4a2f08e8e43b0de",
     "openbb_fmp/models/income_statement.py": "e9184483b267f342bb9409cba82146d40dd0452648f0233323132aba3d83f9c3",
     "openbb_fmp/models/__init__.py": "36d893397ab26c3732c596b289cf41913514397f2b2729ecb0d33f56cec58238",
     "openbb_fmp/utils/helpers.py": "55cdabd7328f9b8e8e16ba8f1df7349261f799a8302fdea606ba1542d079c9d2",
@@ -21,7 +20,15 @@
   "adaptations": [
     "pyproject.toml: exact selected core and pinned build backend; discovery compatibility only",
     "__init__.py and provider.py: register EquityInfo and IncomeStatement only",
-    "utils/definitions.py: retain only FinancialStatementPeriods literal used by income model"
+    "utils/definitions.py: retain only FinancialStatementPeriods literal used by income model",
+    "models/equity_profile.py: selected core profile route fixture adaptation; preserve missing flags and stable financial/currency fields"
   ],
-  "runtime_compatibility": "Unverified; route/fetcher adaptation belongs to tasks 3.2-3.4."
+  "runtime_compatibility": "Task 3.2 deterministic installed profile route tested; income, error semantics, service credential injection and live access remain unverified.",
+  "adapted_files": {
+    "openbb_fmp/models/equity_profile.py": {
+      "archive_sha256": "36eb9192978e9114fe0c05c7a790aeff87c2c10537a794c1b4a2f08e8e43b0de",
+      "task": "3.2",
+      "changes": "Nullable provider flags; normalized and encoded symbol requests; non-mutating financial transformation"
+    }
+  }
 }

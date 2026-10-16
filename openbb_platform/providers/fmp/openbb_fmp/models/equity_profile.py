@@ -6,6 +6,7 @@ from datetime import (
     date as dateType,
 )
 from typing import Any
+from urllib.parse import urlencode
 
 from openbb_core.provider.abstract.data import ForceInt
 from openbb_core.provider.abstract.fetcher import Fetcher
@@ -24,6 +25,15 @@ class FMPEquityProfileQueryParams(EquityInfoQueryParams):
     """
 
     __json_schema_extra__ = {"symbol": {"multiple_items_allowed": True}}
+
+    @field_validator("symbol", mode="after")
+    @classmethod
+    def normalize_symbols(cls, value: str) -> str:
+        """Keep symbol identity while accepting whitespace around list items."""
+        symbols = [symbol.strip() for symbol in value.split(",")]
+        if any(not symbol for symbol in symbols):
+            raise ValueError("Each requested symbol must be non-empty.")
+        return ",".join(symbols)
 
 
 class FMPEquityProfileData(EquityInfoData):
@@ -50,10 +60,12 @@ class FMPEquityProfileData(EquityInfoData):
     __json_schema_extra__ = {"symbol": {"multiple_items_allowed": True}}
     model_config = ConfigDict(extra="ignore")
 
-    is_etf: bool = Field(description="If the symbol is an ETF.")
-    is_actively_trading: bool = Field(description="If the company is actively trading.")
-    is_adr: bool = Field(description="If the stock is an ADR.")
-    is_fund: bool = Field(description="If the company is a fund.")
+    is_etf: bool | None = Field(default=None, description="If the symbol is an ETF.")
+    is_actively_trading: bool | None = Field(
+        default=None, description="If the company is actively trading."
+    )
+    is_adr: bool | None = Field(default=None, description="If the stock is an ADR.")
+    is_fund: bool | None = Field(default=None, description="If the company is a fund.")
     image: str | None = Field(default=None, description="Image of the company.")
     currency: str | None = Field(
         default=None, description="Currency in which the stock is traded."
@@ -137,7 +149,8 @@ class FMPEquityProfileFetcher(
 
         async def get_one(symbol):
             """Get data for one symbol."""
-            url = f"{base_url}profile?symbol={symbol}&apikey={api_key}"
+            params = urlencode({"symbol": symbol, "apikey": api_key})
+            url = f"{base_url}profile?{params}"
             result = await amake_request(
                 url, response_callback=response_callback, **kwargs
             )
@@ -166,7 +179,8 @@ class FMPEquityProfileFetcher(
         """Return the transformed data."""
         results: list[FMPEquityProfileData] = []
 
-        for d in data:
+        for raw in data:
+            d = raw.copy()
             d["year_low"], d["year_high"] = (
                 d.pop("range", "-").split("-") if d.get("range") else (None, None)
             )
