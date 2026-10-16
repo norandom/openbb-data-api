@@ -1,0 +1,27 @@
+{
+  "artifact": {
+    "retained_path": "artifacts/task-1.1/openbb_fmp-1.6.1.tar.gz",
+    "sha256": "5f6f27af6283075912df42f373c45ed37bc6970097342ed73110fb6101be5517",
+    "url": "https://files.pythonhosted.org/packages/a1/e6/58f475ce8fe1023eeba28f6b79bcb7970ccaaa8c2ab36d6f8e43b29cad25/openbb_fmp-1.6.1.tar.gz"
+  },
+  "api_base": "5a7517ae8bc74ecdcd1a549ed26df8ad131b02d0",
+  "license": {
+    "sha256": "442baa7865ddf53ba04808a29e4810ac1fd9c83383d4ac76297cec4569e19222",
+    "source": "https://raw.githubusercontent.com/openbq-org/OpenBB/8e306a4de2b3cb0753fbd74d3aca4dcf0fa15472/LICENSE",
+    "note": "Release archive has no standalone license or notice. Historical upstream AGPL text retained; release metadata declares AGPL-3.0-only."
+  },
+  "unchanged_files": {
+    "openbb_fmp/models/equity_profile.py": "36eb9192978e9114fe0c05c7a790aeff87c2c10537a794c1b4a2f08e8e43b0de",
+    "openbb_fmp/models/income_statement.py": "e9184483b267f342bb9409cba82146d40dd0452648f0233323132aba3d83f9c3",
+    "openbb_fmp/models/__init__.py": "36d893397ab26c3732c596b289cf41913514397f2b2729ecb0d33f56cec58238",
+    "openbb_fmp/utils/helpers.py": "55cdabd7328f9b8e8e16ba8f1df7349261f799a8302fdea606ba1542d079c9d2",
+    "openbb_fmp/utils/__init__.py": "882744ce2a061dc547995d395c9aacc08face96c19a6b7a9f9de45cb4df941dc",
+    "README.md": "f338ce0cec9841ded475bd66655d8e8f812fc115c81fab3366ccbee75b98b27b"
+  },
+  "adaptations": [
+    "pyproject.toml: exact selected core and pinned build backend; discovery compatibility only",
+    "__init__.py and provider.py: register EquityInfo and IncomeStatement only",
+    "utils/definitions.py: retain only FinancialStatementPeriods literal used by income model"
+  ],
+  "runtime_compatibility": "Unverified; route/fetcher adaptation belongs to tasks 3.2-3.4."
+}
