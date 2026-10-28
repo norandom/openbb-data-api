@@ -4,20 +4,31 @@
 
 from datetime import (
     date as dateType,
+)
+from datetime import (
     datetime,
 )
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlencode
 
+from openbb_core.provider.abstract.annotated_result import AnnotatedResult
 from openbb_core.provider.abstract.fetcher import Fetcher
+from openbb_core.provider.standard_models.financial_metadata import (
+    FinancialBounds,
+    FinancialFieldMetadata,
+    FinancialResultMetadata,
+    FinancialSource,
+)
 from openbb_core.provider.standard_models.income_statement import (
     IncomeStatementData,
     IncomeStatementQueryParams,
 )
 from openbb_core.provider.utils.descriptions import QUERY_DESCRIPTIONS
-from openbb_fmp.utils.definitions import FinancialStatementPeriods
-from pydantic import Field, field_validator
+from openbb_core.provider.utils.financial_validation import validate_financial_result
+from pydantic import Field, field_validator, model_validator
 
+from openbb_fmp.utils.definitions import FinancialStatementPeriods
+from openbb_fmp.utils.helpers import FMPAcquisition
 
 
 class FMPIncomeStatementQueryParams(IncomeStatementQueryParams):
@@ -32,6 +43,14 @@ class FMPIncomeStatementQueryParams(IncomeStatementQueryParams):
         """Trim surrounding whitespace without changing ticker punctuation."""
         return value.strip()
 
+    @field_validator("limit", mode="after")
+    @classmethod
+    def bounded_limit(cls, value):
+        """Preserve zero while bounding the baseline request."""
+        if value is not None and value > 1000:
+            raise ValueError("Limit must not exceed 1000.")
+        return value
+
     period: FinancialStatementPeriods = Field(
         default="annual",
         description=QUERY_DESCRIPTIONS.get("period", ""),
@@ -41,7 +60,7 @@ class FMPIncomeStatementQueryParams(IncomeStatementQueryParams):
 class FMPIncomeStatementData(IncomeStatementData):
     """FMP Income Statement Data."""
 
-    __alias_dict__ = {
+    __alias_dict__: ClassVar[dict] = {
         "period_ending": "date",
         "fiscal_period": "period",
         "fiscal_year": "calendarYear",
@@ -72,6 +91,17 @@ class FMPIncomeStatementData(IncomeStatementData):
         "weighted_average_basic_shares_outstanding": "weightedAverageShsOut",
         "weighted_average_diluted_shares_outstanding": "weightedAverageShsOutDil",
     }
+
+    @model_validator(mode="before")
+    @classmethod
+    def statement_aliases(cls, values):
+        """Accept stable and legacy spellings without changing fiscal observations."""
+        if isinstance(values, dict):
+            values = values.copy()
+            for legacy, current in (("calendarYear", "fiscalYear"), ("fillingDate", "filingDate")):
+                if current in values:
+                    values[legacy] = values[current]
+        return values
 
     filing_date: dateType | None = Field(
         default=None,
@@ -239,7 +269,7 @@ class FMPIncomeStatementFetcher(
         query: FMPIncomeStatementQueryParams,
         credentials: dict[str, str] | None,
         **kwargs: Any,
-    ) -> list[dict]:
+    ) -> FMPAcquisition:
         """Return the raw data from the FMP endpoint."""
         # pylint: disable=import-outside-toplevel
         from openbb_fmp.utils.helpers import get_data_many
@@ -256,11 +286,47 @@ class FMPIncomeStatementFetcher(
             params["period"] = query.period
         url = f"{base_url}?{urlencode(params)}"
 
-        return await get_data_many(url, **kwargs)
+        return await get_data_many(url, with_provenance=True, typed_errors=False, **kwargs)
 
     @staticmethod
     def transform_data(
-        query: FMPIncomeStatementQueryParams, data: list[dict], **kwargs: Any
-    ) -> list[FMPIncomeStatementData]:
+        query: FMPIncomeStatementQueryParams, data: FMPAcquisition, **kwargs: Any
+    ) -> AnnotatedResult[list[FMPIncomeStatementData]]:
         """Return the transformed data."""
-        return [FMPIncomeStatementData.model_validate(d) for d in data]
+        rows = [validate_financial_result(FMPIncomeStatementData, d, provider="fmp")
+                for d in data.payload]
+        metadata = _income_metadata(query, rows, data.retrieved_at, len(data.payload))
+        return AnnotatedResult(result=rows, metadata=metadata.as_metadata())
+
+
+def _income_metadata(query, rows, retrieved_at, observed):
+    """Retain reported fiscal dates and row currencies without asserting vintage safety."""
+    fields = {}
+    non_amounts = {"symbol", "cik", "period_ending", "fiscal_period", "fiscal_year",
+                   "filing_date", "accepted_date", "reported_currency"}
+    basis = {"annual": "annual", "quarter": "discrete_quarter", "ttm": "trailing_twelve_months"}.get(query.period)
+    for name, field in FMPIncomeStatementData.model_fields.items():
+        monetary = name not in non_amounts and "shares_outstanding" not in name
+        unit = ("currency/share" if "earnings_per_share" in name else "currency") if monetary else None
+        if "shares_outstanding" in name:
+            unit = "shares"
+        fields[name] = FinancialFieldMetadata(
+            definition=field.description or name, unit=unit, scale=1 if unit else None,
+            currency_field="reported_currency" if monetary else None,
+            period_basis=basis, value_origin="provider_observation",
+            availability="available" if any(getattr(row, name) is not None for row in rows) else "missing",
+            observation_date_field="period_ending", publication_date_field="filing_date",
+        )
+    requested = query.limit if query.limit is not None else 5
+    return FinancialResultMetadata(
+        dataset="equity/fundamental/income", provider="fmp", retrieved_at=retrieved_at,
+        source=FinancialSource(endpoint="income-statement-ttm" if query.period == "ttm" else "income-statement"),
+        effective_query={"symbol": query.symbol, "period": query.period, "limit": requested}, fields=fields,
+        bounds=FinancialBounds(requested_limit=query.limit, returned_count=len(rows),
+                               effective_limit=requested if observed <= requested else None,
+                               truncated=None, completeness="unknown"),
+        observation_date_field="period_ending", publication_date_field="filing_date",
+        limitations=["Provider completeness and restatement history are unavailable.",
+                     "Filing dates do not establish point-in-time availability.",
+                     "All returned baseline rows are retained; effective limit is unknown when the provider exceeds its request."],
+    )

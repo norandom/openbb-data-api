@@ -55,8 +55,8 @@ async def response_callback(response, _, *, typed=False):
     return data
 
 
-async def get_data(url: str, *, with_provenance=False, **kwargs: Any):
-    """Get data from FMP endpoint."""
+async def get_data(url: str, *, with_provenance=False, typed_errors=None, **kwargs: Any):
+    """Get data; error mode defaults to provenance unless explicitly overridden."""
     # pylint: disable=import-outside-toplevel
     from aiohttp import ClientConnectionError
     from openbb_core.provider.utils.financial_errors import FinancialError
@@ -64,8 +64,10 @@ async def get_data(url: str, *, with_provenance=False, **kwargs: Any):
 
     from openbb_fmp.utils.errors import FMPEmptyData, FMPError, FMPUnauthorized, fail
 
+    typed = with_provenance if typed_errors is None else typed_errors
+
     async def callback(response, session):
-        return await response_callback(response, session, typed=with_provenance)
+        return await response_callback(response, session, typed=typed)
 
     try:
         data = await amake_request(url, response_callback=callback, **kwargs)
@@ -80,7 +82,7 @@ async def get_data(url: str, *, with_provenance=False, **kwargs: Any):
     else:
         return FMPAcquisition(data, datetime.now(UTC)) if with_provenance else data
     # Raise outside the handler so the unsafe original exception is not chained.
-    fail(category, typed=with_provenance)
+    fail(category, typed=typed)
 
 
 async def get_data_urls(urls: list[str], **kwargs: Any) -> list | dict:
@@ -94,7 +96,7 @@ async def get_data_urls(urls: list[str], **kwargs: Any) -> list | dict:
         or not 1 <= len(urls) <= 20
         or any(not isinstance(url, str) or not url for url in urls)
     ):
-        fail("invalid_parameters", typed=kwargs.get("with_provenance", False))
+        fail("invalid_parameters", typed=kwargs.get("with_provenance", False) if kwargs.get("typed_errors") is None else kwargs["typed_errors"])
     results = []
     for url in urls:
         result = await get_data(url, **kwargs)
@@ -174,9 +176,9 @@ async def get_data_many(
     from openbb_fmp.utils.errors import fail
 
     if not isinstance(data, list) or any(not isinstance(row, dict) for row in data):
-        fail("invalid_response", typed=kwargs.get("with_provenance", False))
+        fail("invalid_response", typed=kwargs.get("with_provenance", False) if kwargs.get("typed_errors") is None else kwargs["typed_errors"])
     if len(data) == 0:
-        fail("missing_data", typed=kwargs.get("with_provenance", False))
+        fail("missing_data", typed=kwargs.get("with_provenance", False) if kwargs.get("typed_errors") is None else kwargs["typed_errors"])
 
     return (
         FMPAcquisition(data, acquired.retrieved_at)

@@ -5,17 +5,28 @@
 from datetime import (
     date as dateType,
 )
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlencode
 
+from openbb_core.provider.abstract.annotated_result import AnnotatedResult
 from openbb_core.provider.abstract.data import ForceInt
 from openbb_core.provider.abstract.fetcher import Fetcher
 from openbb_core.provider.standard_models.equity_info import (
     EquityInfoData,
     EquityInfoQueryParams,
 )
+from openbb_core.provider.standard_models.financial_metadata import (
+    FinancialBounds,
+    FinancialFieldMetadata,
+    FinancialResultMetadata,
+    FinancialSource,
+)
 from openbb_core.provider.utils.errors import EmptyDataError
+from openbb_core.provider.utils.financial_errors import FinancialError
+from openbb_core.provider.utils.financial_validation import validate_financial_result
 from pydantic import ConfigDict, Field, field_validator, model_validator
+
+from openbb_fmp.utils.helpers import FMPAcquisition
 
 
 class FMPEquityProfileQueryParams(EquityInfoQueryParams):
@@ -24,7 +35,7 @@ class FMPEquityProfileQueryParams(EquityInfoQueryParams):
     Source: https://site.financialmodelingprep.com/developer/docs#profile-symbol
     """
 
-    __json_schema_extra__ = {"symbol": {"multiple_items_allowed": True}}
+    __json_schema_extra__: ClassVar[dict] = {"symbol": {"multiple_items_allowed": True}}
 
     @field_validator("symbol", mode="after")
     @classmethod
@@ -39,7 +50,7 @@ class FMPEquityProfileQueryParams(EquityInfoQueryParams):
 class FMPEquityProfileData(EquityInfoData):
     """FMP Equity Profile Data."""
 
-    __alias_dict__ = {
+    __alias_dict__: ClassVar[dict] = {
         "name": "companyName",
         "stock_exchange": "exchange",
         "company_url": "website",
@@ -57,7 +68,7 @@ class FMPEquityProfileData(EquityInfoData):
         "volume_avg": "averageVolume",
         "annualized_dividend_amount": "lastDividend",
     }
-    __json_schema_extra__ = {"symbol": {"multiple_items_allowed": True}}
+    __json_schema_extra__: ClassVar[dict] = {"symbol": {"multiple_items_allowed": True}}
     model_config = ConfigDict(extra="ignore")
 
     is_etf: bool | None = Field(default=None, description="If the symbol is an ETF.")
@@ -133,7 +144,7 @@ class FMPEquityProfileFetcher(
         query: FMPEquityProfileQueryParams,
         credentials: dict[str, str] | None,
         **kwargs: Any,
-    ) -> list[dict]:
+    ) -> FMPAcquisition:
         """Return the raw data from the FMP endpoint."""
         # pylint: disable=import-outside-toplevel
         import asyncio  # noqa
@@ -145,16 +156,26 @@ class FMPEquityProfileFetcher(
         base_url = "https://financialmodelingprep.com/stable/"
 
         results: list = []
+        acquisitions = []
 
         async def get_one(symbol):
             """Get data for one symbol."""
             params = urlencode({"symbol": symbol, "apikey": api_key})
             url = f"{base_url}profile?{params}"
-            result = await get_data(url, **kwargs)
+            try:
+                acquired = await get_data(url, with_provenance=True, typed_errors=False, **kwargs)
+            except EmptyDataError:
+                result = []
+            else:
+                acquisitions.append(acquired.retrieved_at)
+                result = acquired.payload
             if not result:
                 warnings.warn(f"Symbol Error: No data found for {symbol}")
 
             if result:
+                if (not isinstance(result, list) or not isinstance(result[0], dict)
+                        or result[0].get("symbol") != symbol):
+                    raise FinancialError("invalid_response", provider="fmp")
                 results.append(result[0])
 
         await asyncio.gather(*[get_one(symbol) for symbol in symbols])
@@ -162,25 +183,59 @@ class FMPEquityProfileFetcher(
         if not results:
             raise EmptyDataError("No data found for the given symbols.")
 
-        return sorted(
-            results,
-            key=(lambda item: (symbols.index(item.get("symbol", len(symbols))))),
+        return FMPAcquisition(
+            sorted(results, key=lambda item: symbols.index(item["symbol"])),
+            min(acquisitions),
         )
 
     @staticmethod
     def transform_data(
         query: FMPEquityProfileQueryParams,
-        data: list[dict],
+        data: FMPAcquisition,
         **kwargs: Any,
-    ) -> list[FMPEquityProfileData]:
+    ) -> AnnotatedResult[list[FMPEquityProfileData]]:
         """Return the transformed data."""
         results: list[FMPEquityProfileData] = []
 
-        for raw in data:
+        for raw in data.payload:
             d = raw.copy()
-            d["year_low"], d["year_high"] = (
-                d.pop("range", "-").split("-") if d.get("range") else (None, None)
-            )
-            results.append(FMPEquityProfileData.model_validate(d))
+            bounds = d.pop("range", None)
+            if bounds is not None and not isinstance(bounds, str):
+                raise FinancialError("invalid_response", provider="fmp")
+            bounds = bounds.split("-") if bounds else [None, None]
+            if len(bounds) != 2:
+                raise FinancialError("invalid_response", provider="fmp")
+            d["year_low"], d["year_high"] = bounds
+            results.append(validate_financial_result(FMPEquityProfileData, d, provider="fmp"))
 
-        return results
+        metadata = _profile_metadata(query, results, data.retrieved_at)
+        return AnnotatedResult(result=results, metadata=metadata.as_metadata())
+
+
+def _profile_metadata(query, rows, retrieved_at):
+    """Profile prices use each row's trading currency; quote dates are unavailable."""
+    monetary = {"last_price", "year_low", "year_high", "annualized_dividend_amount", "market_cap"}
+    fields = {}
+    for name, field in FMPEquityProfileData.model_fields.items():
+        unit = ("currency" if name == "market_cap" else "currency/share") if name in monetary else None
+        if name in {"volume_avg", "shares_outstanding"}:
+            unit = "shares"
+        elif name == "employees":
+            unit = "people"
+        elif name == "beta":
+            unit = "dimensionless"
+        fields[name] = FinancialFieldMetadata(
+            definition=field.description or name, unit=unit, scale=1 if unit else None,
+            currency_field="currency" if name in monetary else None,
+            value_origin="provider_calculation" if name in {"beta", "market_cap", "volume_avg", "annualized_dividend_amount"} else "provider_observation",
+            availability="available" if any(getattr(row, name) is not None for row in rows) else "missing",
+        )
+    partial = len(rows) < len(query.symbol.split(","))
+    return FinancialResultMetadata(
+        dataset="equity/profile", provider="fmp", retrieved_at=retrieved_at,
+        source=FinancialSource(endpoint="profile"), effective_query={"symbol": query.symbol},
+        fields=fields, bounds=FinancialBounds(returned_count=len(rows),
+            truncated=None, completeness="partial" if partial else "unknown"),
+        limitations=["Quote observation dates and provider coverage are unavailable.",
+                     "Trading currency does not establish financial-statement currency."],
+    )
