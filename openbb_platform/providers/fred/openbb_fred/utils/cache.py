@@ -4,6 +4,8 @@ import os
 import re
 from typing import Any
 
+from openbb_fred.utils.acquisition import disk_record, from_disk_record
+
 ROOT_URL = "https://api.stlouisfed.org"
 
 HOUR = 60 * 60
@@ -157,13 +159,15 @@ def get_disk_cache():
     return _cache
 
 
-async def disk_get(url: str) -> Any:
+async def disk_get(url: str, *, with_provenance: bool = False) -> Any:
     """Read a cached payload for a URL.
 
     Parameters
     ----------
     url : str
         The request URL.
+    with_provenance : bool
+        Require an original acquisition time; unknown legacy times are misses.
 
     Returns
     -------
@@ -177,7 +181,12 @@ async def disk_get(url: str) -> Any:
     if cache is None:
         return None
 
-    return await asyncio.to_thread(cache.get, redact(url))
+    record = await asyncio.to_thread(cache.get, ("fred-acquisition", 1, redact(url)))
+    if with_provenance:
+        return from_disk_record(record)
+    if isinstance(record, dict) and record.get("version") == 1 and "payload" in record:
+        return record["payload"]
+    return None
 
 
 async def disk_set(url: str, value: Any) -> None:
@@ -197,7 +206,12 @@ async def disk_set(url: str, value: Any) -> None:
     if cache is None:
         return
 
-    await asyncio.to_thread(cache.set, redact(url), value, expire=ttl_for(url))
+    await asyncio.to_thread(
+        cache.set,
+        ("fred-acquisition", 1, redact(url)),
+        disk_record(value),
+        expire=ttl_for(url),
+    )
 
 
 def clear() -> None:
