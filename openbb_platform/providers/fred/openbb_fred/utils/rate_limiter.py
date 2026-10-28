@@ -5,14 +5,16 @@ from __future__ import annotations
 import asyncio
 import copy
 import os
-import re
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Any
 
 from openbb_core.app.model.abstract.error import OpenBBError
+from openbb_fred.utils.acquisition import FredAcquisition
 
 
 def _float_env(name: str, default: float) -> float:
@@ -55,8 +57,6 @@ _cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
 _inflight_lock = threading.Lock()
 _inflight: dict[tuple[int, str], asyncio.Future] = {}
 
-_API_KEY_RE = re.compile(r"([?&])api_key=[^&]*")
-
 
 class _RateLimitedResponse(Exception):
     """Internal sentinel raised when a 429 is observed on a FRED response."""
@@ -70,7 +70,7 @@ def _cache_key(url: str) -> str:
     """Build a cache key from a URL, stripping the API key."""
     from openbb_fred.utils.cache import redact
 
-    return redact(url)
+    return "fred-acquisition:1:" + redact(url)
 
 
 def _cache_get(key: str) -> Any:
@@ -87,7 +87,7 @@ def _cache_get(key: str) -> Any:
             return None
         _cache.move_to_end(key)
         cached_value = value
-    return copy.deepcopy(cached_value)
+    return replace(copy.deepcopy(cached_value), cache_state="memory")
 
 
 def _cache_set(key: str, value: Any) -> None:
@@ -188,10 +188,50 @@ async def _fetch(
 
 
 def _is_cacheable(value: Any) -> bool:
-    """Don't cache empty / falsy payloads — they're usually transient errors."""
+    """Don't cache empty / falsy payloads â€” they're usually transient errors."""
     if value is None:
         return False
     return not (isinstance(value, (list, dict, str, bytes)) and len(value) == 0)
+
+
+async def _cached_acquisition(url: str, key: str) -> FredAcquisition | None:
+    """Disk promotion retains acquisition age, independent of memory TTL."""
+    from openbb_fred.utils.cache import disk_get
+
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    stored = await disk_get(url, with_provenance=True)
+    if stored is not None:
+        _cache_set(key, stored)
+    return stored
+
+
+def _join_flight(key: str | None) -> tuple[Any, Any, bool]:
+    """Share only requests within the same running event loop."""
+    if key is None:
+        return None, None, False
+    loop = asyncio.get_running_loop()
+    flight_key = (id(loop), key)
+    with _inflight_lock:
+        if flight_key in _inflight:
+            return flight_key, _inflight[flight_key], False
+        future = loop.create_future()
+        _inflight[flight_key] = future
+        return flight_key, future, True
+
+
+async def _acquire_result(url: str, key: str | None, callback: Any,
+                          retries: int, kwargs: dict) -> FredAcquisition:
+    """Stamp receipt before storage, never when reading or transforming data."""
+    from openbb_fred.utils.cache import disk_set
+
+    payload = await _fetch(url, response_callback=callback, retries=retries, **kwargs)
+    result = FredAcquisition(payload, datetime.now(timezone.utc), "network")
+    if key is not None and _is_cacheable(payload):
+        _cache_set(key, result)
+        await disk_set(url, result)
+    return result
 
 
 async def fred_get(
@@ -200,75 +240,32 @@ async def fred_get(
     response_callback: Callable[[Any, Any], Awaitable[dict | list[dict]]] | None = None,
     max_retries: int | None = None,
     use_cache: bool = True,
+    with_provenance: bool = False,
     **kwargs: Any,
 ) -> Any:
-    """Throttled, retrying, cached GET wrapper around `amake_request` for FRED."""
+    """Return raw payloads by default, or opt into original acquisition facts."""
     retries = MAX_RETRIES if max_retries is None else max_retries
-    cache_key = _cache_key(url) if use_cache else None
-
-    if cache_key is not None:
-        cached = _cache_get(cache_key)
-        if cached is not None:
-            return cached
-
-        from openbb_fred.utils.cache import disk_get
-
-        stored = await disk_get(url)
-
-        if stored is not None:
-            _cache_set(cache_key, stored)
-            return copy.deepcopy(stored)
-
-    inflight_key: tuple[int, str] | None = None
-    future: asyncio.Future | None = None
-    owner = False
-    if cache_key is not None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop is not None:
-            inflight_key = (id(loop), cache_key)
-            with _inflight_lock:
-                existing = _inflight.get(inflight_key)
-                if existing is not None:
-                    future = existing
-                else:
-                    future = loop.create_future()
-                    _inflight[inflight_key] = future
-                    owner = True
-
-    if future is not None and not owner:
-        shared = await future
-        return copy.deepcopy(shared)
-
-    try:
-        result = await _fetch(
-            url,
-            response_callback=response_callback,
-            retries=retries,
-            **kwargs,
-        )
-    except BaseException as exc:
-        if future is not None and owner and not future.done():
-            future.set_exception(exc)
-            future.exception()
-        raise
-    finally:
-        if inflight_key is not None and owner:
-            with _inflight_lock:
-                _inflight.pop(inflight_key, None)
-
-    if cache_key is not None and _is_cacheable(result):
-        from openbb_fred.utils.cache import disk_set
-
-        _cache_set(cache_key, result)
-        await disk_set(url, result)
-
-    if future is not None and owner and not future.done():
-        future.set_result(result)
-
-    return result
+    key = _cache_key(url) if use_cache else None
+    result = await _cached_acquisition(url, key) if key is not None else None
+    if result is None:
+        flight_key, future, owner = _join_flight(key)
+        if future is not None and not owner:
+            result = replace(await asyncio.shield(future), cache_state="coalesced")
+        else:
+            try:
+                result = await _acquire_result(url, key, response_callback, retries, kwargs)
+                if future is not None and not future.done():
+                    future.set_result(copy.deepcopy(result))
+            except BaseException as exc:
+                if future is not None and not future.done():
+                    future.set_exception(exc)
+                    future.exception()
+                raise
+            finally:
+                if owner:
+                    with _inflight_lock:
+                        _inflight.pop(flight_key, None)
+    return copy.deepcopy(result if with_provenance else result.payload)
 
 
 async def fred_get_many(
