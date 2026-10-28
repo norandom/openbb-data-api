@@ -1,65 +1,108 @@
 """FMP Helpers Module."""
 
-from datetime import date
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlencode
 
 from openbb_core.provider.utils.errors import EmptyDataError
 from openbb_core.provider.utils.helpers import get_querystring
 
 
-async def response_callback(response, _):
+@dataclass(frozen=True)
+class FMPAcquisition:
+    """Successful network receipt; transformations must retain this UTC timestamp."""
+
+    payload: list | dict
+    retrieved_at: datetime
+
+
+async def response_callback(response, _, *, typed=False):
     """Classify protocol and legacy payload failures without exposing their text."""
     from openbb_fmp.utils.errors import classify, fail
 
     category = classify(response.status)
     if category:
-        fail(category)
+        fail(
+            category,
+            typed=typed,
+            retry_after=getattr(response, "headers", {}).get("Retry-After"),
+        )
     try:
         data = await response.json()
-    except Exception:
+    except Exception:  # noqa: BLE001 - JSON decoder failures must discard provider text.
         data = None
         invalid_response = True
     else:
         invalid_response = False
     if invalid_response:
-        fail("invalid_response")
+        fail("invalid_response", typed=typed)
     if isinstance(data, dict):
         message = data.get("Error Message", data.get("error"))
         if message is not None:
-            fail(classify(response.status, str(message)) or "upstream")
+            fail(
+                classify(response.status, str(message)) or "upstream",
+                typed=typed,
+                retry_after=getattr(response, "headers", {}).get("Retry-After"),
+            )
     if data == [] or data == {} or data is None:
-        fail("missing_data")
+        fail("missing_data", typed=typed)
+    if not isinstance(data, (list, dict)) or (
+        isinstance(data, list) and any(not isinstance(row, dict) for row in data)
+    ):
+        fail("invalid_response", typed=typed)
     return data
 
 
-async def get_data(url: str, **kwargs: Any) -> list | dict:
+async def get_data(url: str, *, with_provenance=False, **kwargs: Any):
     """Get data from FMP endpoint."""
     # pylint: disable=import-outside-toplevel
+    from aiohttp import ClientConnectionError
+    from openbb_core.provider.utils.financial_errors import FinancialError
     from openbb_core.provider.utils.helpers import amake_request
 
-    from aiohttp import ClientConnectionError
-    from openbb_fmp.utils.errors import FMPError, FMPUnauthorized, FMPEmptyData, fail
+    from openbb_fmp.utils.errors import FMPEmptyData, FMPError, FMPUnauthorized, fail
+
+    async def callback(response, session):
+        return await response_callback(response, session, typed=with_provenance)
+
     try:
-        return await amake_request(url, response_callback=response_callback, **kwargs)
+        data = await amake_request(url, response_callback=callback, **kwargs)
     except TimeoutError:
         category = "timeout"
     except (ConnectionError, ClientConnectionError):
         category = "connection"
-    except (FMPError, FMPUnauthorized, FMPEmptyData):
+    except (FinancialError, FMPError, FMPUnauthorized, FMPEmptyData):
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001 - Unknown transport failures may contain credentials.
         category = "transport"
+    else:
+        return FMPAcquisition(data, datetime.now(UTC)) if with_provenance else data
     # Raise outside the handler so the unsafe original exception is not chained.
-    fail(category)
+    fail(category, typed=with_provenance)
 
 
 async def get_data_urls(urls: list[str], **kwargs: Any) -> list | dict:
-    """Get data from FMP for several urls."""
+    """Fetch one to twenty URLs serially; failures stop the batch without retries."""
     # pylint: disable=import-outside-toplevel
-    from openbb_core.provider.utils.helpers import amake_requests
+    from openbb_fmp.utils.errors import fail
 
-    return await amake_requests(urls, response_callback=response_callback, **kwargs)
+    # Sequential requests bound concurrency and stop on the first failure.
+    if (
+        not isinstance(urls, list)
+        or not 1 <= len(urls) <= 20
+        or any(not isinstance(url, str) or not url for url in urls)
+    ):
+        fail("invalid_parameters", typed=kwargs.get("with_provenance", False))
+    results = []
+    for url in urls:
+        result = await get_data(url, **kwargs)
+        if isinstance(result, list):
+            results.extend(result)
+        else:
+            results.append(result)
+    return results
 
 
 def create_url(
@@ -95,14 +138,20 @@ def create_url(
     the_dict = {}
     if query:
         the_dict = query.model_dump() if isinstance(query, BaseModel) else query
-    query_string = get_querystring(the_dict, exclude or [])
+    query_string = urlencode(
+        {
+            k: v
+            for k, v in the_dict.items()
+            if k not in (exclude or []) and k != "apikey" and v is not None
+        }
+    )
     base_url = f"https://financialmodelingprep.com/api/v{version}/"
-    return f"{base_url}{endpoint}?{query_string}&apikey={api_key}"
+    return f"{base_url}{endpoint}?{query_string}&{urlencode({'apikey': api_key or ''})}"
 
 
 async def get_data_many(
     url: str, sub_dict: str | None = None, **kwargs: Any
-) -> list[dict]:
+) -> list[dict] | FMPAcquisition:
     """Get data from FMP endpoint and convert to list of schemas.
 
     Parameters
@@ -117,21 +166,29 @@ async def get_data_many(
     list[dict]
         Dictionary of data.
     """
-    data = await get_data(url, **kwargs)
+    acquired = await get_data(url, **kwargs)
+    data = acquired.payload if isinstance(acquired, FMPAcquisition) else acquired
 
     if sub_dict and isinstance(data, dict):
         data = data.get(sub_dict, [])
-    if isinstance(data, dict):
-        raise ValueError("Expected list of dicts, got dict")
+    from openbb_fmp.utils.errors import fail
+
+    if not isinstance(data, list) or any(not isinstance(row, dict) for row in data):
+        fail("invalid_response", typed=kwargs.get("with_provenance", False))
     if len(data) == 0:
-        raise EmptyDataError()
+        fail("missing_data", typed=kwargs.get("with_provenance", False))
 
-    return data
+    return (
+        FMPAcquisition(data, acquired.retrieved_at)
+        if isinstance(acquired, FMPAcquisition)
+        else data
+    )
 
 
-async def get_data_one(url: str, **kwargs: Any) -> dict:
+async def get_data_one(url: str, **kwargs: Any) -> dict | FMPAcquisition:
     """Get data from FMP endpoint and convert to schema."""
-    data = await get_data(url, **kwargs)
+    acquired = await get_data(url, **kwargs)
+    data = acquired.payload if isinstance(acquired, FMPAcquisition) else acquired
     if isinstance(data, list):
         if len(data) == 0:
             raise ValueError("Expected dict, got empty list")
@@ -141,7 +198,11 @@ async def get_data_one(url: str, **kwargs: Any) -> dict:
         except TypeError as e:
             raise ValueError("Expected dict, got list of dicts") from e
 
-    return data
+    return (
+        FMPAcquisition(data, acquired.retrieved_at)
+        if isinstance(acquired, FMPAcquisition)
+        else data
+    )
 
 
 def most_recent_quarter(base: date | None = None) -> date:
