@@ -24,8 +24,10 @@ from openbb_core.provider.standard_models.fred_series import (
     SeriesQueryParams,
 )
 from openbb_core.provider.utils.descriptions import QUERY_DESCRIPTIONS
-from openbb_fred.utils.query import UseCacheQueryParams
+from openbb_core.provider.utils.financial_errors import FinancialError
 from pydantic import Field, field_validator
+
+from openbb_fred.utils.query import UseCacheQueryParams
 
 
 class FredSeriesQueryParams(UseCacheQueryParams, SeriesQueryParams):
@@ -159,10 +161,11 @@ class FredSeriesFetcher(
         """Extract data."""
         import asyncio
 
+        from pandas import DataFrame
+
         from openbb_fred.utils.api import build_url
         from openbb_fred.utils.rate_limiter import fred_get
         from openbb_fred.utils.response import observations
-        from pandas import DataFrame
 
         api_key = credentials.get("fred_api_key") if credentials else ""
         params = query.model_dump(exclude_none=True)
@@ -230,9 +233,11 @@ class FredSeriesFetcher(
             return results
         except OpenBBError as error:
             from openbb_fred.utils.response import safe_error
-            raise safe_error(error) from None
+            failure = safe_error(error)
         except Exception:
-            raise OpenBBError("FRED request failed.") from None
+            failure = FinancialError("upstream", provider="fred")
+        # Raise outside exception handling so raw provider context is discarded.
+        raise failure
 
     @staticmethod
     def transform_data(

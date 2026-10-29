@@ -2,6 +2,7 @@
 from typing import Any
 
 from openbb_core.app.model.abstract.error import OpenBBError
+from openbb_core.provider.utils.financial_errors import FinancialError
 
 
 def validate_response(payload: Any, status: int | None = None) -> None:
@@ -27,11 +28,15 @@ def observations(payload: Any) -> list[dict]:
     return rows
 
 
-def safe_error(error: OpenBBError) -> OpenBBError:
+def safe_error(error: OpenBBError) -> FinancialError:
     """Keep known failure categories and suppress arbitrary transport diagnostics."""
-    message = str(error)
-    allowed = {
-        "FRED authentication failed.", "FRED data unavailable.", "FRED request failed.",
-        "FRED API rate limit exceeded (HTTP 429). Please wait a moment and try again.",
+    if type(error) is FinancialError:
+        return FinancialError(
+            error.code, provider="fred", retry_after_seconds=error.retry_after_seconds,
+        )
+    categories = {
+        "FRED authentication failed.": "authentication",
+        "FRED data unavailable.": "missing_data",
+        "FRED API rate limit exceeded (HTTP 429). Please wait a moment and try again.": "throttling",
     }
-    return OpenBBError(message if message in allowed else "FRED request failed.")
+    return FinancialError(categories.get(str(error), "upstream"), provider="fred")
