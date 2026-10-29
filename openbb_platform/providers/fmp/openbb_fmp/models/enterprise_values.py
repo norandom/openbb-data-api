@@ -2,7 +2,7 @@
 
 import re
 from datetime import date
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlencode
 
 from openbb_core.provider.abstract.annotated_result import AnnotatedResult
@@ -11,9 +11,16 @@ from openbb_core.provider.standard_models.enterprise_values import (
     EnterpriseValuesData,
     EnterpriseValuesQueryParams,
 )
+from openbb_core.provider.standard_models.financial_annotations import (
+    FinancialDataAnnotation,
+    FinancialFieldTemplate,
+    FinancialQueryAnnotation,
+    ResponsePolicy,
+    bind_query_annotation,
+    render_field_templates,
+)
 from openbb_core.provider.standard_models.financial_metadata import (
     FinancialBounds,
-    FinancialFieldMetadata,
     FinancialResultMetadata,
     FinancialSource,
 )
@@ -23,12 +30,23 @@ from openbb_core.provider.utils.financial_validation import (
 )
 from pydantic import AliasChoices, Field, field_validator
 
-from openbb_fmp.utils.definitions import validate_statement_query
 from openbb_fmp.utils.helpers import FMPAcquisition
 
 
 class FMPEnterpriseValuesQueryParams(EnterpriseValuesQueryParams):
     """Reject unsafe symbols before provider I/O."""
+
+    financial_query_annotation: ClassVar[FinancialQueryAnnotation] = FinancialQueryAnnotation(
+        provider_policy="explicit",
+        response_policy=ResponsePolicy(mode="clip", limit_parameter="limit"),
+        runtime_properties=["bounds", "effective_query", "retrieved_at"],
+    )
+
+    @field_validator("period", mode="before")
+    @classmethod
+    def periodic_alias(cls, value):
+        """Retain the accepted quarterly spelling without copying period choices."""
+        return "quarter" if value == "quarterly" else value
 
     @field_validator("symbol", mode="before")
     @classmethod
@@ -42,8 +60,35 @@ class FMPEnterpriseValuesQueryParams(EnterpriseValuesQueryParams):
         return value
 
 
+def _input_template(unit: str | None = None, *, calculated: bool = False) -> FinancialFieldTemplate:
+    """Source dates leave market-input alignment and component conventions unknown."""
+    return FinancialFieldTemplate(
+        unit=unit, scale=1 if unit else None,
+        currency_field="currency" if unit in {"currency", "currency/share"} else None,
+        value_origin="provider_calculation" if calculated else "provider_observation",
+        observation_date_field="date",
+        financial_basis={"share_count": None, "debt": None, "cash": None, "lease": None,
+                         "minority_interest": None, "forecast_period": None, "market_date": None},
+    )
+
+
 class FMPEnterpriseValuesData(EnterpriseValuesData):
     """Map stable FMP components without reversing cash signs or recomputing EV."""
+
+    financial_data_annotation: ClassVar[FinancialDataAnnotation] = FinancialDataAnnotation(
+        fields={
+            "symbol": _input_template(),
+            "date": _input_template(),
+            "currency": _input_template(),
+            "stock_price": _input_template("currency/share"),
+            "number_of_shares": _input_template("shares"),
+            "market_cap": _input_template("currency", calculated=True),
+            "cash_and_cash_equivalents": _input_template("currency"),
+            "total_debt": _input_template("currency"),
+            "enterprise_value": _input_template("currency", calculated=True),
+        },
+        runtime_properties=["fields.availability", "retrieved_at", "effective_query", "bounds"],
+    )
 
     currency: str | None = Field(default=None, validation_alias=AliasChoices("reportedCurrency", "currency"), description="Explicit provider row currency, otherwise unknown.")
     market_cap: float | None = Field(default=None, validation_alias=AliasChoices("marketCapitalization", "marketCap", "market_cap"), description="Provider market capitalization in row currency; valuation basis unknown.")
@@ -57,9 +102,8 @@ class FMPEnterpriseValuesFetcher(Fetcher[FMPEnterpriseValuesQueryParams, list[FM
     @staticmethod
     def transform_query(params: dict[str, Any]) -> FMPEnterpriseValuesQueryParams:
         """Enforce single-symbol periodic bounds before extraction."""
-        bounded = validate_statement_query(params.get("symbol"), params.get("period", "annual"), params.get("limit", 5))
         return validate_financial_query(FMPEnterpriseValuesQueryParams,
-            {**params, **bounded, "symbol": params.get("symbol")}, provider="fmp")
+            params, provider="fmp")
 
     @staticmethod
     async def aextract_data(query, credentials, **kwargs: Any) -> FMPAcquisition:
@@ -76,40 +120,34 @@ class FMPEnterpriseValuesFetcher(Fetcher[FMPEnterpriseValuesQueryParams, list[FM
         """Latest dated rows first; preserve duplicate source order and put undated rows last."""
         rows = [validate_financial_result(FMPEnterpriseValuesData, item, provider="fmp") for item in data.payload]
         rows.sort(key=lambda row: row.date or date.min, reverse=True)
-        truncated = len(rows) > query.limit
-        rows = rows[:query.limit]
+        policy = bind_query_annotation(type(query)).response_policy
+        limit = getattr(query, policy.limit_parameter)
+        truncated = len(rows) > limit
+        rows = rows[:limit]
         return AnnotatedResult(result=rows, metadata=_metadata(query, rows, data, truncated).as_metadata())
 
 
 def _fields(rows):
-    """A fiscal observation date never establishes the underlying market-input date."""
-    fields = {}
-    for name, field in FMPEnterpriseValuesData.model_fields.items():
-        monetary = name in {"stock_price", "market_cap", "cash_and_cash_equivalents", "total_debt", "enterprise_value"}
-        unit = "currency/share" if name == "stock_price" else "currency" if monetary else None
-        if name == "number_of_shares":
-            unit = "shares"
-        fields[name] = FinancialFieldMetadata(
-            definition=field.description or name, unit=unit, scale=1 if unit else None,
-            currency_field="currency" if monetary else None,
-            value_origin="provider_calculation" if name in {"market_cap", "enterprise_value"} else "provider_observation",
-            availability="available" if any(getattr(row, name) is not None for row in rows) else "missing",
-            observation_date_field="date",
-            financial_basis={"share_count": None, "debt": None, "cash": None, "lease": None,
-                             "minority_interest": None, "forecast_period": None, "market_date": None},
+    """Resolve actual availability without changing declared dates or input conventions."""
+    fields = render_field_templates(FMPEnterpriseValuesData)
+    for name, field in fields.items():
+        field.availability = (
+            "available" if any(getattr(row, name) is not None for row in rows) else "missing"
         )
     return fields
 
 
 def _metadata(query, rows, data, truncated):
     """Expose inputs, not a reconciled or analyst-adjusted enterprise-value bridge."""
+    policy = bind_query_annotation(type(query)).response_policy
+    limit = getattr(query, policy.limit_parameter)
     return FinancialResultMetadata(
         dataset="equity/fundamental/enterprise_values", provider="fmp", retrieved_at=data.retrieved_at,
         source=FinancialSource(endpoint="enterprise-values",
             documentation="https://site.financialmodelingprep.com/developer/docs/stable/enterprise-values"),
         effective_query={"symbol": query.symbol, "period": query.period, "limit": query.limit},
         fields=_fields(rows), observation_date_field="date",
-        bounds=FinancialBounds(requested_limit=query.limit, effective_limit=query.limit,
+        bounds=FinancialBounds(requested_limit=limit, effective_limit=limit,
             returned_count=len(rows), truncated=True if truncated else None,
             completeness="partial" if truncated else "unknown"),
         limitations=[
