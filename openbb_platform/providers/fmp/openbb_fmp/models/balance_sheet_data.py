@@ -1,15 +1,111 @@
 """Retained FMP balance-sheet fields; amounts remain in reported currency units."""
 
-from datetime import date as dateType
-from datetime import datetime
+from datetime import (
+    date as dateType,
+    datetime,
+)
 from typing import ClassVar
 
 from openbb_core.provider.standard_models.balance_sheet import BalanceSheetData
+from openbb_core.provider.standard_models.financial_annotations import (
+    FinancialDataAnnotation,
+    FinancialFieldTemplate,
+)
 from pydantic import Field, model_validator
+
+
+def _balance_template(amount=False, basis=None) -> FinancialFieldTemplate:
+    """Declare reported stocks without asserting undocumented valuation bridges."""
+    bases = {
+        "debt": "Provider-reported; lease inclusion and netting conventions unknown.",
+        "cash": "Provider-reported cash category; unrestricted cash basis unknown.",
+        "lease": "Provider-reported capital lease category; accounting scope unknown.",
+        "minority_interest": "Provider-reported non-controlling interest category.",
+    }
+    return FinancialFieldTemplate(
+        unit="currency" if amount else None,
+        scale=1 if amount else None,
+        currency_field="reported_currency" if amount else None,
+        period_basis="instant" if amount else None,
+        value_origin="provider_observation",
+        observation_date_field="period_ending",
+        publication_date_field="filing_date",
+        financial_basis={basis: bases[basis]} if basis is not None else {},
+    )
 
 
 class FMPBalanceSheetData(BalanceSheetData):
     """FMP Balance Sheet Data."""
+
+    financial_data_annotation: ClassVar[FinancialDataAnnotation] = FinancialDataAnnotation(
+        fields={
+            "period_ending": _balance_template(),
+            "fiscal_period": _balance_template(),
+            "fiscal_year": _balance_template(),
+            "filing_date": _balance_template(),
+            "accepted_date": _balance_template(),
+            "cik": _balance_template(),
+            "symbol": _balance_template(),
+            "reported_currency": _balance_template(),
+            "cash_and_cash_equivalents": _balance_template(amount=True, basis="cash"),
+            "short_term_investments": _balance_template(amount=True),
+            "cash_and_short_term_investments": _balance_template(amount=True, basis="cash"),
+            "accounts_receivables": _balance_template(amount=True),
+            "other_receivables": _balance_template(amount=True),
+            "net_receivables": _balance_template(amount=True),
+            "inventory": _balance_template(amount=True),
+            "other_current_assets": _balance_template(amount=True),
+            "total_current_assets": _balance_template(amount=True),
+            "plant_property_equipment_net": _balance_template(amount=True),
+            "goodwill": _balance_template(amount=True),
+            "intangible_assets": _balance_template(amount=True),
+            "goodwill_and_intangible_assets": _balance_template(amount=True),
+            "long_term_investments": _balance_template(amount=True),
+            "tax_assets": _balance_template(amount=True),
+            "other_non_current_assets": _balance_template(amount=True),
+            "non_current_assets": _balance_template(amount=True),
+            "other_assets": _balance_template(amount=True),
+            "total_assets": _balance_template(amount=True),
+            "accounts_payable": _balance_template(amount=True),
+            "prepaid_expenses": _balance_template(amount=True),
+            "accrued_expenses": _balance_template(amount=True),
+            "short_term_debt": _balance_template(amount=True, basis="debt"),
+            "tax_payables": _balance_template(amount=True),
+            "current_deferred_revenue": _balance_template(amount=True),
+            "other_current_liabilities": _balance_template(amount=True),
+            "other_payables": _balance_template(amount=True),
+            "total_current_liabilities": _balance_template(amount=True),
+            "total_payables": _balance_template(amount=True),
+            "long_term_debt": _balance_template(amount=True, basis="debt"),
+            "deferred_revenue_non_current": _balance_template(amount=True),
+            "deferred_tax_liabilities_non_current": _balance_template(amount=True),
+            "other_non_current_liabilities": _balance_template(amount=True),
+            "total_non_current_liabilities": _balance_template(amount=True),
+            "capital_lease_obligations_current": _balance_template(amount=True, basis="lease"),
+            "capital_lease_obligations_non_current": _balance_template(amount=True, basis="lease"),
+            "capital_lease_obligations": _balance_template(amount=True, basis="lease"),
+            "other_liabilities": _balance_template(amount=True),
+            "total_liabilities": _balance_template(amount=True),
+            "preferred_stock": _balance_template(amount=True),
+            "common_stock": _balance_template(amount=True),
+            "treasury_stock": _balance_template(amount=True),
+            "retained_earnings": _balance_template(amount=True),
+            "additional_paid_in_capital": _balance_template(amount=True),
+            "accumulated_other_comprehensive_income": _balance_template(amount=True),
+            "other_shareholders_equity": _balance_template(amount=True),
+            "other_total_shareholders_equity": _balance_template(amount=True),
+            "total_common_equity": _balance_template(amount=True),
+            "total_equity_non_controlling_interests": _balance_template(amount=True, basis="minority_interest"),
+            "total_liabilities_and_shareholders_equity": _balance_template(amount=True),
+            "minority_interest": _balance_template(amount=True, basis="minority_interest"),
+            "total_liabilities_and_total_equity": _balance_template(amount=True),
+            "total_investments": _balance_template(amount=True),
+            "total_debt": _balance_template(amount=True, basis="debt"),
+            "net_debt": _balance_template(amount=True, basis="debt"),
+        },
+        runtime_properties=["fields.availability", "retrieved_at",
+                            "effective_query", "bounds"],
+    )
 
     __alias_dict__: ClassVar[dict] = {
         "period_ending": "date",

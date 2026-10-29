@@ -1,15 +1,20 @@
 """Bounded FMP balance sheets with acquisition provenance and reported amounts."""
 
 import re
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 from urllib.parse import urlencode
 
 from openbb_core.provider.abstract.annotated_result import AnnotatedResult
 from openbb_core.provider.abstract.fetcher import Fetcher
 from openbb_core.provider.standard_models.balance_sheet import BalanceSheetQueryParams
+from openbb_core.provider.standard_models.financial_annotations import (
+    FinancialQueryAnnotation,
+    ResponsePolicy,
+    bind_query_annotation,
+    render_field_templates,
+)
 from openbb_core.provider.standard_models.financial_metadata import (
     FinancialBounds,
-    FinancialFieldMetadata,
     FinancialResultMetadata,
     FinancialSource,
 )
@@ -26,6 +31,12 @@ from openbb_fmp.utils.helpers import FMPAcquisition
 
 class FMPBalanceSheetQueryParams(BalanceSheetQueryParams):
     """One security, annual or quarterly reporting dates, at most 1000 records."""
+
+    financial_query_annotation: ClassVar[FinancialQueryAnnotation] = FinancialQueryAnnotation(
+        provider_policy="explicit",
+        response_policy=ResponsePolicy(mode="clip", limit_parameter="limit"),
+        runtime_properties=["bounds", "effective_query", "retrieved_at"],
+    )
 
     period: Literal["annual", "quarter"] = Field(default="annual")
     limit: int = Field(default=5, ge=1, le=1000)
@@ -51,7 +62,9 @@ class FMPBalanceSheetFetcher(
     def transform_query(params: dict[str, Any]) -> FMPBalanceSheetQueryParams:
         """Reject invalid query inputs before the acquisition boundary."""
         bounded = validate_statement_query(
-            params.get("symbol"), params.get("period", "annual"), params.get("limit", 5)
+            params.get("symbol"),
+            params.get("period", FMPBalanceSheetQueryParams.model_fields["period"].default),
+            params.get("limit", FMPBalanceSheetQueryParams.model_fields["limit"].default)
         )
         return validate_financial_query(
             FMPBalanceSheetQueryParams,
@@ -89,47 +102,22 @@ class FMPBalanceSheetFetcher(
             for row in data.payload
         ]
         rows.sort(key=lambda row: row.period_ending, reverse=True)
-        truncated = len(rows) > query.limit
-        rows = rows[:query.limit]
+        policy = bind_query_annotation(type(query)).response_policy
+        limit = getattr(query, policy.limit_parameter)
+        truncated = len(rows) > limit
+        rows = rows[:limit]
         metadata = _balance_metadata(query, rows, data.retrieved_at, truncated)
         return AnnotatedResult(result=rows, metadata=metadata.as_metadata())
 
 
 def _balance_fields(rows):
-    """Balance-sheet amounts are stocks at a date, including quarterly filings."""
-    identity = {
-        "symbol", "cik", "period_ending", "fiscal_period", "fiscal_year",
-        "filing_date", "accepted_date", "reported_currency",
-    }
-    fields = {}
-    for name, field in FMPBalanceSheetData.model_fields.items():
-        amount = name not in identity
-        fields[name] = FinancialFieldMetadata(
-            definition=field.description or name,
-            unit="currency" if amount else None,
-            scale=1 if amount else None,
-            currency_field="reported_currency" if amount else None,
-            period_basis="instant" if amount else None,
-            value_origin="provider_observation",
-            availability="available" if any(getattr(row, name) is not None for row in rows) else "missing",
-            observation_date_field="period_ending",
-            publication_date_field="filing_date",
-            financial_basis=_valuation_basis(name),
+    """Resolve observed availability on independent class-owned stock templates."""
+    fields = render_field_templates(FMPBalanceSheetData)
+    for name, field in fields.items():
+        field.availability = (
+            "available" if any(getattr(row, name) is not None for row in rows) else "missing"
         )
     return fields
-
-
-def _valuation_basis(name):
-    """Retain provider categories without asserting undocumented lease/debt bridges."""
-    if "debt" in name:
-        return {"debt": "Provider-reported; lease inclusion and netting conventions unknown."}
-    if "cash" in name:
-        return {"cash": "Provider-reported cash category; unrestricted cash basis unknown."}
-    if "lease" in name:
-        return {"lease": "Provider-reported capital lease category; accounting scope unknown."}
-    if name in {"minority_interest", "total_equity_non_controlling_interests"}:
-        return {"minority_interest": "Provider-reported non-controlling interest category."}
-    return {}
 
 
 def _balance_metadata(query, rows, retrieved_at, truncated):

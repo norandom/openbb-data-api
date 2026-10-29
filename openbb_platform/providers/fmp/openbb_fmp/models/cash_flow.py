@@ -1,15 +1,20 @@
 """Bounded FMP cash-flow observations with acquisition and financial semantics."""
 
 import re
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 from urllib.parse import urlencode
 
 from openbb_core.provider.abstract.annotated_result import AnnotatedResult
 from openbb_core.provider.abstract.fetcher import Fetcher
 from openbb_core.provider.standard_models.cash_flow import CashFlowStatementQueryParams
+from openbb_core.provider.standard_models.financial_annotations import (
+    FinancialQueryAnnotation,
+    ResponsePolicy,
+    bind_query_annotation,
+    render_field_templates,
+)
 from openbb_core.provider.standard_models.financial_metadata import (
     FinancialBounds,
-    FinancialFieldMetadata,
     FinancialResultMetadata,
     FinancialSource,
 )
@@ -26,6 +31,12 @@ from openbb_fmp.utils.helpers import FMPAcquisition
 
 class FMPCashFlowStatementQueryParams(CashFlowStatementQueryParams):
     """One symbol and one annual or discrete-quarter reporting basis."""
+
+    financial_query_annotation: ClassVar[FinancialQueryAnnotation] = FinancialQueryAnnotation(
+        provider_policy="explicit",
+        response_policy=ResponsePolicy(mode="clip", limit_parameter="limit"),
+        runtime_properties=["bounds", "effective_query", "retrieved_at"],
+    )
 
     period: Literal["annual", "quarter"] = Field(
         default="annual", description="Annual or discrete quarterly statements; TTM unsupported."
@@ -52,7 +63,9 @@ class FMPCashFlowStatementFetcher(
     def transform_query(params: dict[str, Any]) -> FMPCashFlowStatementQueryParams:
         """Validate bounds before transport without retaining unsafe input errors."""
         bounded = validate_statement_query(
-            params.get("symbol"), params.get("period", "annual"), params.get("limit", 5)
+            params.get("symbol"),
+            params.get("period", FMPCashFlowStatementQueryParams.model_fields["period"].default),
+            params.get("limit", FMPCashFlowStatementQueryParams.model_fields["limit"].default)
         )
         return validate_financial_query(
             FMPCashFlowStatementQueryParams,
@@ -76,37 +89,26 @@ class FMPCashFlowStatementFetcher(
                 for item in data.payload]
         rows.sort(key=lambda row: row.period_ending, reverse=True)
         observed = len(rows)
-        rows = rows[:query.limit]
+        policy = bind_query_annotation(type(query)).response_policy
+        rows = rows[:getattr(query, policy.limit_parameter)]
         metadata = _cash_metadata(query, rows, data.retrieved_at, observed)
         return AnnotatedResult(result=rows, metadata=metadata.as_metadata())
 
 
 def _cash_fields(query, rows):
     """Currency varies by row; provider totals keep their declared cash basis unknown."""
-    non_amounts = {"period_ending", "fiscal_period", "fiscal_year", "filing_date",
-                   "accepted_date", "cik", "symbol", "reported_currency"}
-    calculations = {"free_cash_flow", "operating_cash_flow"}
-    stocks = {"cash_at_beginning_of_period", "cash_at_end_of_period"}
     periods = {row.fiscal_period for row in rows}
     basis = None
     if periods and periods <= {"FY"}:
         basis = "annual"
     elif periods and periods <= {"Q1", "Q2", "Q3", "Q4"}:
         basis = "discrete_quarter"
-    fields = {}
-    for name, field in FMPCashFlowStatementData.model_fields.items():
-        monetary = name not in non_amounts
-        fields[name] = FinancialFieldMetadata(
-            definition=field.description or "Provider-reported free cash flow; calculation definition unavailable.",
-            unit="currency" if monetary else None,
-            scale=1 if monetary else None,
-            currency_field="reported_currency" if monetary else None,
-            period_basis="instant" if name in stocks else basis,
-            value_origin="provider_calculation" if name in calculations else "provider_observation",
-            availability="available" if any(getattr(row, name) is not None for row in rows) else "missing",
-            observation_date_field=None if name == "cash_at_beginning_of_period" else "period_ending",
-            publication_date_field="filing_date",
-            financial_basis={"cash": None} if monetary else {},
+    fields = render_field_templates(FMPCashFlowStatementData)
+    for name, field in fields.items():
+        if field.period_basis != "instant":
+            field.period_basis = basis
+        field.availability = (
+            "available" if any(getattr(row, name) is not None for row in rows) else "missing"
         )
     return fields
 

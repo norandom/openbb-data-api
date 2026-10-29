@@ -1,18 +1,90 @@
 """Retained FMP cash-flow field meanings and stable/legacy aliases."""
 from datetime import (
     date as dateType,
-)
-from datetime import (
     datetime,
 )
 from typing import ClassVar
 
 from openbb_core.provider.standard_models.cash_flow import CashFlowStatementData
+from openbb_core.provider.standard_models.financial_annotations import (
+    FinancialDataAnnotation,
+    FinancialFieldTemplate,
+)
 from pydantic import Field, model_validator
+
+
+def _cash_template(amount=False, calculated=False, stock=False, opening=False) -> FinancialFieldTemplate:
+    """Declare cash stocks and flows without deriving provider calculation formulas."""
+    return FinancialFieldTemplate(
+        unit="currency" if amount else None,
+        scale=1 if amount else None,
+        currency_field="reported_currency" if amount else None,
+        period_basis="instant" if stock else None,
+        value_origin="provider_calculation" if calculated else "provider_observation",
+        observation_date_field=None if opening else "period_ending",
+        publication_date_field="filing_date",
+        financial_basis={"cash": None} if amount else {},
+    )
 
 
 class FMPCashFlowStatementData(CashFlowStatementData):
     """FMP Cash Flow Statement Data."""
+
+    financial_data_annotation: ClassVar[FinancialDataAnnotation] = FinancialDataAnnotation(
+        fields={
+            "period_ending": _cash_template(),
+            "fiscal_period": _cash_template(),
+            "fiscal_year": _cash_template(),
+            "filing_date": _cash_template(),
+            "accepted_date": _cash_template(),
+            "cik": _cash_template(),
+            "symbol": _cash_template(),
+            "reported_currency": _cash_template(),
+            "net_income": _cash_template(amount=True),
+            "depreciation_and_amortization": _cash_template(amount=True),
+            "deferred_income_tax": _cash_template(amount=True),
+            "stock_based_compensation": _cash_template(amount=True),
+            "change_in_working_capital": _cash_template(amount=True),
+            "change_in_account_receivables": _cash_template(amount=True),
+            "change_in_inventory": _cash_template(amount=True),
+            "change_in_account_payable": _cash_template(amount=True),
+            "change_in_other_working_capital": _cash_template(amount=True),
+            "change_in_other_non_cash_items": _cash_template(amount=True),
+            "net_cash_from_operating_activities": _cash_template(amount=True),
+            "purchase_of_property_plant_and_equipment": _cash_template(amount=True),
+            "acquisitions": _cash_template(amount=True),
+            "purchase_of_investment_securities": _cash_template(amount=True),
+            "sale_and_maturity_of_investments": _cash_template(amount=True),
+            "other_investing_activities": _cash_template(amount=True),
+            "net_cash_from_investing_activities": _cash_template(amount=True),
+            "repayment_of_debt": _cash_template(amount=True),
+            "issuance_of_common_equity": _cash_template(amount=True),
+            "repurchase_of_common_equity": _cash_template(amount=True),
+            "net_common_equity_issuance": _cash_template(amount=True),
+            "net_preferred_equity_issuance": _cash_template(amount=True),
+            "net_equity_issuance": _cash_template(amount=True),
+            "short_term_net_debt_issuance": _cash_template(amount=True),
+            "long_term_net_debt_issuance": _cash_template(amount=True),
+            "net_debt_issuance": _cash_template(amount=True),
+            "common_dividends_paid": _cash_template(amount=True),
+            "preferred_dividends_paid": _cash_template(amount=True),
+            "net_dividends_paid": _cash_template(amount=True),
+            "payment_of_dividends": _cash_template(amount=True),
+            "other_financing_activities": _cash_template(amount=True),
+            "net_cash_from_financing_activities": _cash_template(amount=True),
+            "effect_of_exchange_rate_changes_on_cash": _cash_template(amount=True),
+            "net_change_in_cash_and_equivalents": _cash_template(amount=True),
+            "cash_at_beginning_of_period": _cash_template(amount=True, stock=True, opening=True),
+            "cash_at_end_of_period": _cash_template(amount=True, stock=True),
+            "operating_cash_flow": _cash_template(amount=True, calculated=True),
+            "capital_expenditure": _cash_template(amount=True),
+            "income_taxes_paid": _cash_template(amount=True),
+            "interest_paid": _cash_template(amount=True),
+            "free_cash_flow": _cash_template(amount=True, calculated=True),
+        },
+        runtime_properties=["fields.availability", "fields.period_basis", "retrieved_at",
+                            "effective_query", "bounds"],
+    )
 
     __alias_dict__: ClassVar[dict] = {
         "period_ending": "date",
@@ -260,4 +332,5 @@ class FMPCashFlowStatementData(CashFlowStatementData):
     )
     free_cash_flow: int | None = Field(
         default=None,
+        description="Provider-reported free cash flow; calculation definition unavailable.",
     )
