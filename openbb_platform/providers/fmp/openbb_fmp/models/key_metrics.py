@@ -2,14 +2,19 @@
 
 import re
 from datetime import date
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 from urllib.parse import urlencode
 
 from openbb_core.provider.abstract.annotated_result import AnnotatedResult
 from openbb_core.provider.abstract.fetcher import Fetcher
+from openbb_core.provider.standard_models.financial_annotations import (
+    FinancialQueryAnnotation,
+    ResponsePolicy,
+    bind_query_annotation,
+    render_field_templates,
+)
 from openbb_core.provider.standard_models.financial_metadata import (
     FinancialBounds,
-    FinancialFieldMetadata,
     FinancialResultMetadata,
     FinancialSource,
 )
@@ -27,6 +32,12 @@ from openbb_fmp.utils.helpers import FMPAcquisition
 
 class FMPKeyMetricsQueryParams(KeyMetricsQueryParams):
     """Single-symbol periodic observations; TTM synthesis is unsupported."""
+
+    financial_query_annotation: ClassVar[FinancialQueryAnnotation] = FinancialQueryAnnotation(
+        provider_policy="explicit",
+        response_policy=ResponsePolicy(mode="clip", limit_parameter="limit"),
+        runtime_properties=["bounds", "effective_query", "retrieved_at"],
+    )
 
     period: Literal["annual", "quarter"] = Field(default="annual")
     limit: int = Field(default=5, ge=1, le=1000)
@@ -51,7 +62,9 @@ class FMPKeyMetricsFetcher(Fetcher[FMPKeyMetricsQueryParams, list[FMPKeyMetricsD
     def transform_query(params: dict[str, Any]) -> FMPKeyMetricsQueryParams:
         """Validate before any provider I/O."""
         bounded = validate_statement_query(
-            params.get("symbol"), params.get("period", "annual"), params.get("limit", 5)
+            params.get("symbol"),
+            params.get("period", FMPKeyMetricsQueryParams.model_fields["period"].default),
+            params.get("limit", FMPKeyMetricsQueryParams.model_fields["limit"].default),
         )
         return validate_financial_query(
             FMPKeyMetricsQueryParams, {**params, **bounded, "symbol": params.get("symbol")},
@@ -80,66 +93,25 @@ class FMPKeyMetricsFetcher(Fetcher[FMPKeyMetricsQueryParams, list[FMPKeyMetricsD
         rows = [validate_financial_result(FMPKeyMetricsData, row, provider="fmp")
                 for row in data.payload]
         rows.sort(key=lambda row: row.period_ending or date.min, reverse=True)
-        truncated = len(rows) > query.limit
-        rows = rows[:query.limit]
+        policy = bind_query_annotation(type(query)).response_policy
+        limit = getattr(query, policy.limit_parameter)
+        truncated = len(rows) > limit
+        rows = rows[:limit]
         return AnnotatedResult(result=rows, metadata=_metadata(query, rows, data, truncated).as_metadata())
-
-
-IDENTITY = {"symbol", "period_ending", "fiscal_year", "fiscal_period", "currency"}
-CURRENCY = {
-    "market_cap", "enterprise_value", "working_capital", "invested_capital",
-    "average_receivables", "average_payables", "average_inventory",
-    "free_cash_flow_to_equity", "free_cash_flow_to_firm", "tangible_asset_value",
-    "net_current_asset_value",
-}
-PER_SHARE = {"graham_number", "graham_net_net"}
-DAYS = {
-    "days_of_sales_outstanding", "days_of_payables_outstanding", "days_of_inventory_outstanding",
-    "operating_cycle", "cash_conversion_cycle",
-}
-MULTIPLES = {
-    "ev_to_sales", "ev_to_operating_cash_flow", "ev_to_free_cash_flow", "ev_to_ebitda",
-    "net_debt_to_ebitda", "current_ratio", "income_quality", "capex_to_depreciation",
-}
-FRACTIONS = {
-    "tax_burden", "interest_burden", "return_on_assets", "operating_return_on_assets",
-    "return_on_tangible_assets", "return_on_equity", "return_on_invested_capital",
-    "return_on_capital_employed", "earnings_yield", "free_cash_flow_yield",
-    "capex_to_operating_cash_flow", "capex_to_revenue",
-    "sales_general_and_administrative_to_revenue", "research_and_development_to_revenue",
-    "stock_based_compensation_to_revenue", "intangibles_to_total_assets",
-}
-
-
-def _unit(name):
-    """Use declared financial categories rather than guessing units from field names."""
-    for names, unit in [(CURRENCY, "currency"), (PER_SHARE, "currency/share"),
-                        (DAYS, "days"), (MULTIPLES, "multiple"), (FRACTIONS, "fraction")]:
-        if name in names:
-            return unit
-    return None
 
 
 def _fields(rows):
     """Fiscal labels do not establish the method window or market valuation date."""
-    fields = {}
+    fields = render_field_templates(FMPKeyMetricsData)
     periods = {row.fiscal_period for row in rows}
     period_basis = "annual" if periods == {"FY"} else None
     if periods and periods.issubset({"Q1", "Q2", "Q3", "Q4"}):
         period_basis = "discrete_quarter"
-    for name, field in FMPKeyMetricsData.model_fields.items():
-        unit = _unit(name)
-        fields[name] = FinancialFieldMetadata(
-            definition=field.description or name, unit=unit,
-            scale=1 if unit else None, currency_field="currency" if name in CURRENCY | PER_SHARE else None,
-            period_basis=period_basis if name not in IDENTITY else None,
-            value_origin="provider_observation" if name in IDENTITY else "provider_calculation",
-            availability="available" if any(getattr(row, name) is not None for row in rows) else "missing",
-            observation_date_field="period_ending" if name in IDENTITY else None,
-            financial_basis={} if name in IDENTITY else {
-                "share_count": None, "debt": None, "cash": None, "lease": None,
-                "minority_interest": None, "forecast_period": None, "market_date": None,
-            },
+    for name, field in fields.items():
+        if field.value_origin == "provider_calculation":
+            field.period_basis = period_basis
+        field.availability = (
+            "available" if any(getattr(row, name) is not None for row in rows) else "missing"
         )
     return fields
 

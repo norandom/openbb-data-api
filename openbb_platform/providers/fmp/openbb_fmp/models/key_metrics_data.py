@@ -2,14 +2,97 @@
 
 from typing import ClassVar
 
+from openbb_core.provider.standard_models.financial_annotations import (
+    FinancialDataAnnotation,
+    FinancialFieldTemplate,
+)
 from openbb_core.provider.standard_models.key_metrics import KeyMetricsData
 from pydantic import ConfigDict, Field, model_validator
+
+
+def _calculation(unit: str) -> FinancialFieldTemplate:
+    """Declare provider calculations without assuming valuation conventions."""
+    return FinancialFieldTemplate(
+        unit=unit, scale=1, value_origin="provider_calculation",
+        currency_field="currency" if unit in {"currency", "currency/share"} else None,
+        financial_basis={
+            "share_count": None, "debt": None, "cash": None, "lease": None,
+            "minority_interest": None, "forecast_period": None, "market_date": None,
+        },
+    )
 
 
 class FMPKeyMetricsData(KeyMetricsData):
     """FMP Equity Valuation Multiples Data."""
 
+    financial_data_annotation: ClassVar[FinancialDataAnnotation] = FinancialDataAnnotation(
+        fields={
+            "symbol": FinancialFieldTemplate(
+                value_origin="provider_observation", observation_date_field="period_ending"
+            ),
+            "period_ending": FinancialFieldTemplate(
+                value_origin="provider_observation", observation_date_field="period_ending"
+            ),
+            "fiscal_year": FinancialFieldTemplate(
+                value_origin="provider_observation", observation_date_field="period_ending"
+            ),
+            "fiscal_period": FinancialFieldTemplate(
+                value_origin="provider_observation", observation_date_field="period_ending"
+            ),
+            "currency": FinancialFieldTemplate(
+                value_origin="provider_observation", observation_date_field="period_ending"
+            ),
+            "market_cap": _calculation("currency"),
+            "enterprise_value": _calculation("currency"),
+            "ev_to_sales": _calculation("multiple"),
+            "ev_to_operating_cash_flow": _calculation("multiple"),
+            "ev_to_free_cash_flow": _calculation("multiple"),
+            "ev_to_ebitda": _calculation("multiple"),
+            "net_debt_to_ebitda": _calculation("multiple"),
+            "current_ratio": _calculation("multiple"),
+            "income_quality": _calculation("multiple"),
+            "graham_number": _calculation("currency/share"),
+            "graham_net_net": _calculation("currency/share"),
+            "tax_burden": _calculation("fraction"),
+            "interest_burden": _calculation("fraction"),
+            "working_capital": _calculation("currency"),
+            "invested_capital": _calculation("currency"),
+            "return_on_assets": _calculation("fraction"),
+            "operating_return_on_assets": _calculation("fraction"),
+            "return_on_tangible_assets": _calculation("fraction"),
+            "return_on_equity": _calculation("fraction"),
+            "return_on_invested_capital": _calculation("fraction"),
+            "return_on_capital_employed": _calculation("fraction"),
+            "earnings_yield": _calculation("fraction"),
+            "free_cash_flow_yield": _calculation("fraction"),
+            "capex_to_operating_cash_flow": _calculation("fraction"),
+            "capex_to_depreciation": _calculation("multiple"),
+            "capex_to_revenue": _calculation("fraction"),
+            "sales_general_and_administrative_to_revenue": _calculation("fraction"),
+            "research_and_development_to_revenue": _calculation("fraction"),
+            "stock_based_compensation_to_revenue": _calculation("fraction"),
+            "intangibles_to_total_assets": _calculation("fraction"),
+            "average_receivables": _calculation("currency"),
+            "average_payables": _calculation("currency"),
+            "average_inventory": _calculation("currency"),
+            "days_of_sales_outstanding": _calculation("days"),
+            "days_of_payables_outstanding": _calculation("days"),
+            "days_of_inventory_outstanding": _calculation("days"),
+            "operating_cycle": _calculation("days"),
+            "cash_conversion_cycle": _calculation("days"),
+            "free_cash_flow_to_equity": _calculation("currency"),
+            "free_cash_flow_to_firm": _calculation("currency"),
+            "tangible_asset_value": _calculation("currency"),
+            "net_current_asset_value": _calculation("currency"),
+        },
+        runtime_properties=["fields.availability", "fields.period_basis", "retrieved_at",
+                            "effective_query", "bounds"],
+    )
+
     model_config = ConfigDict(extra="ignore", allow_inf_nan=False)
+
+    # Preserve the accepted definition where the inherited description is empty.
+    market_cap: int | float | None = Field(default=None, description="market_cap")
 
     __alias_dict__: ClassVar[dict[str, str]] = {
         "period_ending": "date",
