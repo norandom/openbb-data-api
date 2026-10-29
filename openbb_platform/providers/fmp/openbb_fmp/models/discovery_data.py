@@ -1,12 +1,17 @@
 """FMP discovery identity fields and shared provenance semantics."""
 
 import re
+from typing import ClassVar
 from urllib.parse import quote
 
 from openbb_core.provider.abstract.data import Data
+from openbb_core.provider.standard_models.financial_annotations import (
+    FinancialDataAnnotation,
+    FinancialFieldTemplate,
+    render_field_templates,
+)
 from openbb_core.provider.standard_models.financial_metadata import (
     FinancialBounds,
-    FinancialFieldMetadata,
     FinancialResultMetadata,
     FinancialSource,
     FinancialTransformation,
@@ -16,6 +21,22 @@ from pydantic import AliasChoices, Field, field_validator, model_validator
 
 class FMPDiscoveryIdentity(Data):
     """A provider listing reference is distinct from an optional issuer reference."""
+
+    financial_data_annotation: ClassVar[FinancialDataAnnotation] = FinancialDataAnnotation(
+        fields={
+            "symbol": FinancialFieldTemplate(value_origin="provider_observation"),
+            "name": FinancialFieldTemplate(value_origin="provider_observation"),
+            "exchange": FinancialFieldTemplate(value_origin="provider_observation"),
+            "exchange_short_name": FinancialFieldTemplate(value_origin="provider_observation"),
+            "currency": FinancialFieldTemplate(value_origin="provider_observation"),
+            "cik": FinancialFieldTemplate(value_origin="provider_observation"),
+            "isin": FinancialFieldTemplate(value_origin="provider_observation"),
+            "instrument_type": FinancialFieldTemplate(value_origin="provider_observation"),
+            "listing_id": FinancialFieldTemplate(value_origin="locally_derived"),
+            "issuer_id": FinancialFieldTemplate(value_origin="locally_derived"),
+        },
+        runtime_properties=["retrieved_at", "source", "effective_query", "fields.availability", "bounds"],
+    )
 
     symbol: str = Field(min_length=1, description="FMP security/listing symbol, not an issuer identifier.")
     name: str | None = Field(default=None, validation_alias=AliasChoices("name", "companyName"), description="Provider-readable company/security name.")
@@ -31,7 +52,7 @@ class FMPDiscoveryIdentity(Data):
     @field_validator("symbol")
     @classmethod
     def nonblank_symbol(cls, value):
-        """A missing listing symbol cannot identify a discovery result."""
+        """Reject missing listing symbols that cannot identify discovery results."""
         if not value.strip() or re.search(r"[\r\n\x00]", value):
             raise ValueError("Invalid listing symbol")
         return value
@@ -48,15 +69,9 @@ class FMPDiscoveryIdentity(Data):
 
 def discovery_metadata(query, rows, receipt, model, endpoint, dataset):
     """Retain receipt time and observed clipping without promising full coverage."""
-    fields = {}
-    for name, field in model.model_fields.items():
-        fields[name] = FinancialFieldMetadata(
-            definition=field.description or name,
-            value_origin="locally_derived" if name in {"listing_id", "issuer_id", "source_symbol", "candidate_basis"} else "provider_calculation" if name == "market_cap" else "provider_observation",
-            availability="available" if any(getattr(row, name) is not None for row in rows) else "missing",
-            unit="currency/share" if name == "price" else "currency" if name == "market_cap" else None,
-            currency_field="currency" if name in {"price", "market_cap"} else None,
-        )
+    fields = render_field_templates(model)
+    for name, field in fields.items():
+        field.availability = "available" if any(getattr(row, name) is not None for row in rows) else "missing"
     clipped = len(receipt.payload) > query.limit
     effective = {"limit": query.limit}
     effective["query" if hasattr(query, "query") else "symbol"] = query.query if hasattr(query, "query") else query.symbol

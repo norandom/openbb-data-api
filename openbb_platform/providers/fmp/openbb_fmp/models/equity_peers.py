@@ -1,7 +1,7 @@
 """Bounded FMP provider peer candidates, without analyst selection claims."""
 
 import re
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 from urllib.parse import urlencode
 
 from openbb_core.provider.abstract.annotated_result import AnnotatedResult
@@ -9,6 +9,14 @@ from openbb_core.provider.abstract.fetcher import Fetcher
 from openbb_core.provider.standard_models.equity_peers import (
     EquityPeersData,
     EquityPeersQueryParams,
+)
+from openbb_core.provider.standard_models.financial_annotations import (
+    FinancialDataAnnotation,
+    FinancialFieldTemplate,
+    FinancialQueryAnnotation,
+    ProceduralBounds,
+    ResponsePolicy,
+    bind_query_annotation,
 )
 from openbb_core.provider.utils.financial_validation import (
     validate_financial_query,
@@ -23,7 +31,15 @@ from openbb_fmp.utils.helpers import FMPAcquisition
 class FMPEquityPeersQueryParams(EquityPeersQueryParams):
     """One source listing with bounded provider candidate output."""
 
+    financial_query_annotation: ClassVar[FinancialQueryAnnotation] = FinancialQueryAnnotation(
+        provider_policy="explicit",
+        procedural_bounds=ProceduralBounds(max_symbols=1),
+        response_policy=ResponsePolicy(mode="clip", limit_parameter="limit"),
+        runtime_properties=["retrieved_at", "source", "effective_query", "bounds"],
+    )
+
     limit: int = Field(default=20, ge=1, le=100, strict=True, description="Maximum peer candidates, 1 to 100.")
+    symbol: str = Field(max_length=50, description=EquityPeersQueryParams.model_fields["symbol"].description)
 
     @field_validator("symbol", mode="before")
     @classmethod
@@ -31,13 +47,25 @@ class FMPEquityPeersQueryParams(EquityPeersQueryParams):
         """Reject multi-symbol and URL syntax before inherited normalization."""
         if not isinstance(value, str) or re.search(r"[\r\n\x00]", value):
             raise ValueError("One nonblank symbol is required")
-        if not re.fullmatch(r"[A-Za-z0-9^][A-Za-z0-9.^_/-]{0,49}", value.strip()):
+        maximum = next(bound.max_length for bound in cls.model_fields["symbol"].metadata if hasattr(bound, "max_length"))
+        if len(value.strip()) > maximum or not re.fullmatch(r"[A-Za-z0-9^][A-Za-z0-9.^_/-]*", value.strip()):
             raise ValueError("One nonblank symbol is required")
         return value.strip().upper()
 
 
 class FMPEquityPeersData(EquityPeersData, FMPDiscoveryIdentity):
     """Peer suggestions retain provider values and the source-symbol mapping."""
+
+    financial_data_annotation: ClassVar[FinancialDataAnnotation] = FinancialDataAnnotation(
+        fields={
+            **FMPDiscoveryIdentity.financial_data_annotation.model_copy(deep=True).fields,
+            "price": FinancialFieldTemplate(value_origin="provider_observation", unit="currency/share", currency_field="currency"),
+            "market_cap": FinancialFieldTemplate(value_origin="provider_calculation", unit="currency", currency_field="currency"),
+            "source_symbol": FinancialFieldTemplate(value_origin="locally_derived"),
+            "candidate_basis": FinancialFieldTemplate(value_origin="locally_derived"),
+        },
+        runtime_properties=FMPDiscoveryIdentity.financial_data_annotation.runtime_properties.copy(),
+    )
 
     model_config = ConfigDict(extra="ignore")
 
@@ -72,6 +100,7 @@ class FMPEquityPeersFetcher(Fetcher[FMPEquityPeersQueryParams, list[FMPEquityPee
                 validate_financial_result(FMPDiscoveryIdentity, item, provider="fmp")
         rows = [validate_financial_result(FMPEquityPeersData, {**item, "source_symbol": query.symbol,
                 "candidate_basis": "provider_suggestion"}, provider="fmp") for item in data.payload]
-        rows = rows[:query.limit]
+        parameter = bind_query_annotation(type(query)).response_policy.limit_parameter
+        rows = rows[:getattr(query, parameter)]
         return AnnotatedResult(result=rows, metadata=discovery_metadata(
             query, rows, data, FMPEquityPeersData, "stock-peers", "equity/compare/peers"))
