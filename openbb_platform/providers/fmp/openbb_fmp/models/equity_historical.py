@@ -1,8 +1,8 @@
 """Bounded daily FMP observations; no interpolation or local price adjustment."""
 
 import re
-from datetime import date
-from typing import Any, Literal
+from datetime import date as dateType
+from typing import Any, ClassVar, Literal
 from urllib.parse import urlencode
 
 from dateutil.relativedelta import relativedelta
@@ -12,9 +12,17 @@ from openbb_core.provider.standard_models.equity_historical import (
     EquityHistoricalData,
     EquityHistoricalQueryParams,
 )
+from openbb_core.provider.standard_models.financial_annotations import (
+    FinancialDataAnnotation,
+    FinancialFieldTemplate,
+    FinancialQueryAnnotation,
+    ProceduralBounds,
+    ResponsePolicy,
+    bind_query_annotation,
+    render_field_templates,
+)
 from openbb_core.provider.standard_models.financial_metadata import (
     FinancialBounds,
-    FinancialFieldMetadata,
     FinancialResultMetadata,
     FinancialSource,
     FinancialTransformation,
@@ -35,8 +43,15 @@ from openbb_fmp.utils.helpers import FMPAcquisition
 class FMPEquityHistoricalQueryParams(EquityHistoricalQueryParams):
     """One symbol, mandatory ordered dates and at most five calendar years."""
 
-    start_date: date
-    end_date: date
+    financial_query_annotation: ClassVar[FinancialQueryAnnotation] = FinancialQueryAnnotation(
+        provider_policy="explicit",
+        procedural_bounds=ProceduralBounds(max_calendar_years=5),
+        response_policy=ResponsePolicy(mode="clip", max_rows=5000),
+        runtime_properties=["bounds", "effective_query", "retrieved_at"],
+    )
+
+    start_date: dateType
+    end_date: dateType
     interval: Literal["1d"] = "1d"
     adjustment: Literal["splits_only"] = "splits_only"
 
@@ -53,7 +68,8 @@ class FMPEquityHistoricalQueryParams(EquityHistoricalQueryParams):
     @model_validator(mode="after")
     def calendar_window(self):
         """Calendar anniversaries clamp leap day to February's last day."""
-        if not self.start_date <= self.end_date <= self.start_date + relativedelta(years=5):
+        years = bind_query_annotation(type(self)).procedural_bounds.max_calendar_years
+        if not self.start_date <= self.end_date <= self.start_date + relativedelta(years=years):
             raise ValueError("Dates must be ordered within five calendar years")
         return self
 
@@ -61,8 +77,50 @@ class FMPEquityHistoricalQueryParams(EquityHistoricalQueryParams):
 class FMPEquityHistoricalData(EquityHistoricalData):
     """Nullable observations retain the full endpoint's split-adjusted price basis."""
 
+    financial_data_annotation: ClassVar[FinancialDataAnnotation] = FinancialDataAnnotation(
+        fields={
+            "date": FinancialFieldTemplate(
+                period_basis="daily", observation_date_field="date", effective_frequency="daily",
+                value_origin="provider_observation",
+            ),
+            "open": FinancialFieldTemplate(
+                unit="currency/share", scale=1, period_basis="daily", observation_date_field="date",
+                effective_frequency="daily", value_origin="provider_observation",
+            ),
+            "high": FinancialFieldTemplate(
+                unit="currency/share", scale=1, period_basis="daily", observation_date_field="date",
+                effective_frequency="daily", value_origin="provider_observation",
+            ),
+            "low": FinancialFieldTemplate(
+                unit="currency/share", scale=1, period_basis="daily", observation_date_field="date",
+                effective_frequency="daily", value_origin="provider_observation",
+            ),
+            "close": FinancialFieldTemplate(
+                unit="currency/share", scale=1, period_basis="daily", observation_date_field="date",
+                effective_frequency="daily", value_origin="provider_observation",
+            ),
+            "volume": FinancialFieldTemplate(
+                unit="shares", scale=1, period_basis="daily", observation_date_field="date",
+                effective_frequency="daily", value_origin="provider_observation",
+            ),
+            "vwap": FinancialFieldTemplate(
+                unit="currency/share", scale=1, period_basis="daily", observation_date_field="date",
+                effective_frequency="daily", value_origin="provider_calculation",
+            ),
+            "change": FinancialFieldTemplate(
+                unit="currency/share", scale=1, period_basis="daily", observation_date_field="date",
+                effective_frequency="daily", value_origin="provider_calculation",
+            ),
+            "change_percent": FinancialFieldTemplate(
+                unit="fraction", scale=1, period_basis="daily", observation_date_field="date",
+                effective_frequency="daily", value_origin="locally_derived",
+            ),
+        },
+        runtime_properties=["fields.availability"],
+    )
+
     model_config = ConfigDict(extra="ignore", allow_inf_nan=False)
-    date: date
+    date: dateType = Field(description="Provider daily observation.")
     open: float | None = Field(default=None, description="Provider split-adjusted opening price.")
     high: float | None = Field(default=None, description="Provider split-adjusted daily high.")
     low: float | None = Field(default=None, description="Provider split-adjusted daily low.")
@@ -114,40 +172,31 @@ class FMPEquityHistoricalFetcher(
             raise FinancialError(FinancialErrorCode.INVALID_RESPONSE, provider="fmp")
         rows.sort(key=lambda item: item.date)
         observed = len(rows)
-        rows = rows[:5000]
+        rows = rows[:bind_query_annotation(type(query)).response_policy.max_rows]
         return AnnotatedResult(result=rows, metadata=_metadata(query, rows, data, observed).as_metadata())
 
 
 def _fields(rows):
     """Currency and corporate-action implementation details remain unavailable."""
-    fields = {}
-    for name, field in FMPEquityHistoricalData.model_fields.items():
-        unit = "fraction" if name == "change_percent" else "currency/share"
-        if name == "volume":
-            unit = "shares"
-        elif name == "date":
-            unit = None
-        fields[name] = FinancialFieldMetadata(
-            definition=field.description or "Provider daily observation.", unit=unit,
-            scale=1 if unit else None, period_basis="daily",
-            observation_date_field="date", effective_frequency="daily",
-            value_origin="locally_derived" if name == "change_percent" else "provider_calculation" if name in {"change", "vwap"}
-            else "provider_observation",
-            availability="available" if any(getattr(row, name) is not None for row in rows) else "missing",
+    fields = render_field_templates(FMPEquityHistoricalData)
+    for name, field in fields.items():
+        field.availability = (
+            "available" if any(getattr(row, name) is not None for row in rows) else "missing"
         )
     return fields
 
 
 def _metadata(query, rows, data, observed):
     """Clipping is observed; absence of clipping cannot prove complete coverage."""
-    clipped = observed > 5000
+    limit = bind_query_annotation(type(query)).response_policy.max_rows
+    clipped = observed > limit
     return FinancialResultMetadata(
         dataset="equity/price/historical", provider="fmp", retrieved_at=data.retrieved_at,
         source=FinancialSource(endpoint="historical-price-eod/full"), fields=_fields(rows),
         effective_query={"symbol": query.symbol, "start_date": query.start_date.isoformat(),
                          "end_date": query.end_date.isoformat(), "interval": query.interval,
                          "adjustment": query.adjustment},
-        bounds=FinancialBounds(effective_limit=5000, returned_count=len(rows),
+        bounds=FinancialBounds(effective_limit=limit, returned_count=len(rows),
                                truncated=True if clipped else None,
                                completeness="partial" if clipped else "unknown"),
         observation_date_field="date",
