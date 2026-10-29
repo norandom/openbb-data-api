@@ -17,13 +17,14 @@
   },
   "adaptations": [
     "pyproject.toml: exact selected core and pinned build backend; discovery compatibility only",
-    "__init__.py and provider.py: register EquityInfo and IncomeStatement only",
+    "__init__.py and provider.py: register the ten independently accepted first-batch FMP models; credentials and entry-point identity retained",
+    "equity composition root: mount the isolated EnterpriseValues command below the existing fundamental namespace without changing the legacy fundamental router",
     "utils/definitions.py: retain only FinancialStatementPeriods literal used by income model",
     "models/equity_profile.py: selected core profile route fixture adaptation; preserve missing flags and stable financial/currency fields",
     "models/income_statement.py: installed annual route fixture verification and encoded query adaptation",
     "utils/helpers.py and utils/errors.py: explicit provider failure categories with fixed credential-safe messages; profile uses the shared FMP request boundary"
   ],
-  "runtime_compatibility": "Tasks 3.2-3.4 deterministic installed profile/income routes and provider failure/redaction fixtures tested; live access and service configuration remain unverified.",
+  "runtime_compatibility": "Existing profile/income fixture acceptance retained. First-batch registration joins accepted source adapters; service discovery/policy installation, regenerated consumers and live entitlement remain separate acceptance steps.",
   "adapted_files": {
     "openbb_fmp/models/equity_profile.py": {
       "archive_sha256": "36eb9192978e9114fe0c05c7a790aeff87c2c10537a794c1b4a2f08e8e43b0de",
