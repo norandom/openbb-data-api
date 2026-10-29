@@ -1,10 +1,16 @@
 """FRED Series Model."""
 
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from openbb_core.app.model.abstract.error import OpenBBError
 from openbb_core.provider.abstract.annotated_result import AnnotatedResult
 from openbb_core.provider.abstract.fetcher import Fetcher
+from openbb_core.provider.standard_models.financial_annotations import (
+    FinancialDataAnnotation,
+    FinancialFieldTemplate,
+    FinancialQueryAnnotation,
+    ResponsePolicy,
+)
 from openbb_core.provider.standard_models.financial_metadata import (
     FINANCIAL_METADATA_KEY,
     FinancialBounds,
@@ -24,6 +30,12 @@ from pydantic import Field, field_validator
 
 class FredSeriesQueryParams(UseCacheQueryParams, SeriesQueryParams):
     """FRED Series Query Params."""
+
+    financial_query_annotation: ClassVar[FinancialQueryAnnotation] = FinancialQueryAnnotation(
+        provider_policy="baseline_default",
+        response_policy=ResponsePolicy(mode="provider"),
+        runtime_properties=["effective_query", "retrieved_at", "bounds"],
+    )
 
     @field_validator("symbol", mode="before")
     @classmethod
@@ -109,6 +121,20 @@ class FredSeriesQueryParams(UseCacheQueryParams, SeriesQueryParams):
 
 class FredSeriesData(SeriesData):
     """FRED Series Data."""
+
+    # Date is the modeled coordinate; acquired series own the quantity metadata.
+    financial_data_annotation: ClassVar[FinancialDataAnnotation] = FinancialDataAnnotation(
+        fields={"date": FinancialFieldTemplate(observation_date_field="date")},
+        dynamic_fields=True,
+        runtime_properties=[
+            "fields", "fields.definition", "fields.source", "fields.unit",
+            "fields.source_unit", "fields.source_frequency", "fields.effective_frequency",
+            "fields.seasonal_adjustment", "fields.requested_transform", "fields.aggregation",
+            "fields.value_origin", "fields.availability", "fields.observation_date_field",
+            "transformations", "observation_date_field", "publication_date_field",
+            "observation_provenance", "vintage_query_supported", "point_in_time_safe",
+        ],
+    )
 
 
 class FredSeriesFetcher(
