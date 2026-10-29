@@ -15,9 +15,15 @@ from openbb_core.provider.standard_models.equity_info import (
     EquityInfoData,
     EquityInfoQueryParams,
 )
+from openbb_core.provider.standard_models.financial_annotations import (
+    FinancialDataAnnotation,
+    FinancialFieldTemplate,
+    FinancialQueryAnnotation,
+    ResponsePolicy,
+    render_field_templates,
+)
 from openbb_core.provider.standard_models.financial_metadata import (
     FinancialBounds,
-    FinancialFieldMetadata,
     FinancialResultMetadata,
     FinancialSource,
 )
@@ -36,6 +42,11 @@ class FMPEquityProfileQueryParams(EquityInfoQueryParams):
     """
 
     __json_schema_extra__: ClassVar[dict] = {"symbol": {"multiple_items_allowed": True}}
+    financial_query_annotation: ClassVar[FinancialQueryAnnotation] = FinancialQueryAnnotation(
+        provider_policy="baseline_default",
+        response_policy=ResponsePolicy(mode="provider"),
+        runtime_properties=["effective_query", "retrieved_at", "bounds"],
+    )
 
     @field_validator("symbol", mode="after")
     @classmethod
@@ -49,6 +60,73 @@ class FMPEquityProfileQueryParams(EquityInfoQueryParams):
 
 class FMPEquityProfileData(EquityInfoData):
     """FMP Equity Profile Data."""
+
+    financial_data_annotation: ClassVar[FinancialDataAnnotation] = FinancialDataAnnotation(
+        fields={
+            "symbol": FinancialFieldTemplate(value_origin="provider_observation"),
+            "name": FinancialFieldTemplate(value_origin="provider_observation"),
+            "cik": FinancialFieldTemplate(value_origin="provider_observation"),
+            "cusip": FinancialFieldTemplate(value_origin="provider_observation"),
+            "isin": FinancialFieldTemplate(value_origin="provider_observation"),
+            "lei": FinancialFieldTemplate(value_origin="provider_observation"),
+            "legal_name": FinancialFieldTemplate(value_origin="provider_observation"),
+            "stock_exchange": FinancialFieldTemplate(value_origin="provider_observation"),
+            "sic": FinancialFieldTemplate(value_origin="provider_observation"),
+            "short_description": FinancialFieldTemplate(value_origin="provider_observation"),
+            "long_description": FinancialFieldTemplate(value_origin="provider_observation"),
+            "ceo": FinancialFieldTemplate(value_origin="provider_observation"),
+            "company_url": FinancialFieldTemplate(value_origin="provider_observation"),
+            "business_address": FinancialFieldTemplate(value_origin="provider_observation"),
+            "mailing_address": FinancialFieldTemplate(value_origin="provider_observation"),
+            "business_phone_no": FinancialFieldTemplate(value_origin="provider_observation"),
+            "hq_address1": FinancialFieldTemplate(value_origin="provider_observation"),
+            "hq_address2": FinancialFieldTemplate(value_origin="provider_observation"),
+            "hq_address_city": FinancialFieldTemplate(value_origin="provider_observation"),
+            "hq_address_postal_code": FinancialFieldTemplate(value_origin="provider_observation"),
+            "hq_state": FinancialFieldTemplate(value_origin="provider_observation"),
+            "hq_country": FinancialFieldTemplate(value_origin="provider_observation"),
+            "inc_state": FinancialFieldTemplate(value_origin="provider_observation"),
+            "inc_country": FinancialFieldTemplate(value_origin="provider_observation"),
+            "employees": FinancialFieldTemplate(unit="people", scale=1, value_origin="provider_observation"),
+            "entity_legal_form": FinancialFieldTemplate(value_origin="provider_observation"),
+            "entity_status": FinancialFieldTemplate(value_origin="provider_observation"),
+            "latest_filing_date": FinancialFieldTemplate(value_origin="provider_observation"),
+            "irs_number": FinancialFieldTemplate(value_origin="provider_observation"),
+            "sector": FinancialFieldTemplate(value_origin="provider_observation"),
+            "industry_category": FinancialFieldTemplate(value_origin="provider_observation"),
+            "industry_group": FinancialFieldTemplate(value_origin="provider_observation"),
+            "template": FinancialFieldTemplate(value_origin="provider_observation"),
+            "standardized_active": FinancialFieldTemplate(value_origin="provider_observation"),
+            "first_fundamental_date": FinancialFieldTemplate(value_origin="provider_observation"),
+            "last_fundamental_date": FinancialFieldTemplate(value_origin="provider_observation"),
+            "first_stock_price_date": FinancialFieldTemplate(value_origin="provider_observation"),
+            "last_stock_price_date": FinancialFieldTemplate(value_origin="provider_observation"),
+            "is_etf": FinancialFieldTemplate(value_origin="provider_observation"),
+            "is_actively_trading": FinancialFieldTemplate(value_origin="provider_observation"),
+            "is_adr": FinancialFieldTemplate(value_origin="provider_observation"),
+            "is_fund": FinancialFieldTemplate(value_origin="provider_observation"),
+            "image": FinancialFieldTemplate(value_origin="provider_observation"),
+            "currency": FinancialFieldTemplate(value_origin="provider_observation"),
+            "market_cap": FinancialFieldTemplate(
+                unit="currency", scale=1, currency_field="currency", value_origin="provider_calculation"
+            ),
+            "last_price": FinancialFieldTemplate(
+                unit="currency/share", scale=1, currency_field="currency", value_origin="provider_observation"
+            ),
+            "year_high": FinancialFieldTemplate(
+                unit="currency/share", scale=1, currency_field="currency", value_origin="provider_observation"
+            ),
+            "year_low": FinancialFieldTemplate(
+                unit="currency/share", scale=1, currency_field="currency", value_origin="provider_observation"
+            ),
+            "volume_avg": FinancialFieldTemplate(unit="shares", scale=1, value_origin="provider_calculation"),
+            "annualized_dividend_amount": FinancialFieldTemplate(
+                unit="currency/share", scale=1, currency_field="currency", value_origin="provider_calculation"
+            ),
+            "beta": FinancialFieldTemplate(unit="dimensionless", scale=1, value_origin="provider_calculation"),
+        },
+        runtime_properties=["fields.availability", "retrieved_at", "effective_query", "bounds"],
+    )
 
     __alias_dict__: ClassVar[dict] = {
         "name": "companyName",
@@ -214,21 +292,10 @@ class FMPEquityProfileFetcher(
 
 def _profile_metadata(query, rows, retrieved_at):
     """Profile prices use each row's trading currency; quote dates are unavailable."""
-    monetary = {"last_price", "year_low", "year_high", "annualized_dividend_amount", "market_cap"}
-    fields = {}
-    for name, field in FMPEquityProfileData.model_fields.items():
-        unit = ("currency" if name == "market_cap" else "currency/share") if name in monetary else None
-        if name in {"volume_avg", "shares_outstanding"}:
-            unit = "shares"
-        elif name == "employees":
-            unit = "people"
-        elif name == "beta":
-            unit = "dimensionless"
-        fields[name] = FinancialFieldMetadata(
-            definition=field.description or name, unit=unit, scale=1 if unit else None,
-            currency_field="currency" if name in monetary else None,
-            value_origin="provider_calculation" if name in {"beta", "market_cap", "volume_avg", "annualized_dividend_amount"} else "provider_observation",
-            availability="available" if any(getattr(row, name) is not None for row in rows) else "missing",
+    fields = render_field_templates(FMPEquityProfileData)
+    for name, field in fields.items():
+        field.availability = (
+            "available" if any(getattr(row, name) is not None for row in rows) else "missing"
         )
     partial = len(rows) < len(query.symbol.split(","))
     return FinancialResultMetadata(
