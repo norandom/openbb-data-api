@@ -21,7 +21,7 @@ class MissingFinancialAnnotation(ValueError):
 
 
 class InvalidFinancialAnnotation(ValueError):
-    """A declaration is malformed or references an absent serialized field."""
+    """A declaration is malformed or references an absent canonical field."""
 
 
 class FinancialFieldTemplate(FinancialFieldMetadata):
@@ -81,7 +81,7 @@ class FinancialQueryAnnotation(FinancialMetadataModel):
 
 
 class FinancialDataAnnotation(FinancialMetadataModel):
-    """Templates use serialized names; runtime properties disclose potential resolution."""
+    """Templates use canonical Python names; runtime properties disclose potential resolution."""
 
     fields: dict[Identifier, FinancialFieldTemplate] = Field(default_factory=dict)
     runtime_properties: list[Identifier] = Field(default_factory=list)
@@ -102,22 +102,19 @@ def _declaration(model: type[BaseModel], attribute: str, expected: type):
         raise InvalidFinancialAnnotation(f"Invalid {attribute}") from exc
 
 
-def _serialized_fields(model: type[BaseModel]) -> dict:
+def _canonical_fields(model: type[BaseModel]) -> dict:
     fields = {}
     for name, field in model.model_fields.items():
         if field.exclude is True:
             continue
-        serialized = field.serialization_alias or field.alias or name
-        if serialized in fields:
-            raise InvalidFinancialAnnotation("Duplicate serialized field name")
-        fields[serialized] = field
+        fields[name] = field
     return fields
 
 
 def bind_query_annotation(model: type[BaseModel]) -> FinancialQueryAnnotation:
     """Return an independently validated declaration without copying model schemas."""
     annotation = _declaration(model, QUERY_ANNOTATION_ATTRIBUTE, FinancialQueryAnnotation)
-    fields = _serialized_fields(model)
+    fields = _canonical_fields(model)
     if (annotation.procedural_bounds.max_calendar_years is not None
             and not {"start_date", "end_date"}.issubset(fields)):
         raise InvalidFinancialAnnotation("Calendar-year bounds require start_date/end_date")
@@ -134,24 +131,24 @@ def bind_query_annotation(model: type[BaseModel]) -> FinancialQueryAnnotation:
 
 
 def bind_data_annotation(model: type[BaseModel]) -> FinancialDataAnnotation:
-    """Validate references against emitted aliases rather than provider input names."""
+    """Validate canonical Python names used by native non-alias responses."""
     annotation = _declaration(model, DATA_ANNOTATION_ATTRIBUTE, FinancialDataAnnotation)
-    fields = _serialized_fields(model)
+    fields = _canonical_fields(model)
     if set(annotation.fields) != set(fields):
-        raise InvalidFinancialAnnotation("Templates must cover exactly the serialized static fields")
+        raise InvalidFinancialAnnotation("Templates must cover exactly the canonical static fields")
     for template in annotation.fields.values():
         for attribute in ("currency_field", "observation_date_field", "valuation_date_field",
                           "publication_date_field"):
             reference = getattr(template, attribute)
             if reference is not None and reference not in fields:
-                raise InvalidFinancialAnnotation("Metadata references an absent serialized field")
+                raise InvalidFinancialAnnotation("Metadata references an absent canonical field")
     return annotation
 
 
 def render_field_templates(model: type[BaseModel]) -> dict[str, FinancialFieldMetadata]:
     """Render independent result templates; adapters fill observed values afterward."""
     annotation = bind_data_annotation(model)
-    fields = _serialized_fields(model)
+    fields = _canonical_fields(model)
     rendered = {}
     for name, template in annotation.fields.items():
         description = fields[name].description
