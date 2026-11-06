@@ -15,7 +15,7 @@ QUERY_PARAMETERS = frozenset({
     "limit", "page", "offset", "start_date", "end_date", "frequency", "units",
     "aggregation_method", "transform", "sort_order", "realtime_start", "realtime_end",
     "vintage_dates", "observation_start", "observation_end", "series_id", "series_ids",
-    "use_cache", "date", "year", "quarter", "fields", "interval", "adjustment",
+    "use_cache", "date", "year", "quarter", "fields", "interval", "adjustment", "ttm",
 })
 
 

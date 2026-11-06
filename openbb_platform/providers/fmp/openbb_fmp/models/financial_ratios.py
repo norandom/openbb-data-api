@@ -123,7 +123,7 @@ def _ratio_metadata(query, rows, retrieved_at, observed):
     return FinancialResultMetadata(
         dataset="equity/fundamental/ratios", provider="fmp", retrieved_at=retrieved_at,
         source=FinancialSource(endpoint="ratios", documentation="https://site.financialmodelingprep.com/developer/docs/stable/metrics-ratios"),
-        effective_query={"symbol": query.symbol, "period": query.period, "limit": query.limit},
+        effective_query={"symbol": query.symbol, "period": query.period, "limit": query.limit, "ttm": query.ttm},
         fields=_ratio_fields(rows),
         bounds=FinancialBounds(requested_limit=limit, effective_limit=limit,
                                returned_count=len(rows), truncated=True if clipped else None,

@@ -122,7 +122,7 @@ def _metadata(query, rows, data, truncated):
         dataset="equity/fundamental/metrics", provider="fmp", retrieved_at=data.retrieved_at,
         source=FinancialSource(endpoint="key-metrics",
                                documentation="https://site.financialmodelingprep.com/developer/docs/stable/key-metrics"),
-        effective_query={"symbol": query.symbol, "period": query.period, "limit": query.limit},
+        effective_query={"symbol": query.symbol, "period": query.period, "limit": query.limit, "ttm": query.ttm},
         fields=_fields(rows),
         bounds=FinancialBounds(requested_limit=query.limit, effective_limit=query.limit,
                                returned_count=len(rows), truncated=True if truncated else None,
