@@ -173,6 +173,13 @@ class FMPBalanceSheetData(BalanceSheetData):
                     values[legacy] = values[current]
         return values
 
+    period_ending: dateType = Field(
+        description="Supplied statement end date; this does not establish a flow start or duration."
+    )
+    fiscal_period: str | None = Field(
+        default=None, description="Reported fiscal label; actual flow duration is unverified."
+    )
+
     filing_date: dateType | None = Field(
         default=None, description="The date when the filing was made."
     )

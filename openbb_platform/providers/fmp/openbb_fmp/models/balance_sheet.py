@@ -20,13 +20,13 @@ from openbb_core.provider.standard_models.financial_metadata import (
 )
 from openbb_core.provider.utils.financial_validation import (
     validate_financial_query,
-    validate_financial_result,
 )
 from pydantic import Field, field_validator
 
 from openbb_fmp.models.balance_sheet_data import FMPBalanceSheetData
 from openbb_fmp.utils.definitions import validate_statement_query
 from openbb_fmp.utils.helpers import FMPAcquisition
+from openbb_fmp.utils.statement_provenance import statement_bundles, with_statement_provenance
 
 
 class FMPBalanceSheetQueryParams(BalanceSheetQueryParams):
@@ -38,7 +38,9 @@ class FMPBalanceSheetQueryParams(BalanceSheetQueryParams):
         runtime_properties=["bounds", "effective_query", "retrieved_at"],
     )
 
-    period: Literal["annual", "quarter"] = Field(default="annual")
+    period: Literal["annual", "quarter"] = Field(
+        default="annual", description="Requested reporting frequency; stocks retain supplied as-of dates."
+    )
     limit: int = Field(default=5, ge=1, le=1000)
 
     @field_validator("symbol", mode="before")
@@ -97,16 +99,16 @@ class FMPBalanceSheetFetcher(
         query: FMPBalanceSheetQueryParams, data: FMPAcquisition, **kwargs: Any
     ) -> AnnotatedResult[list[FMPBalanceSheetData]]:
         """Keep latest dates first; stable ties retain provider order and duplicates."""
-        rows = [
-            validate_financial_result(FMPBalanceSheetData, row, provider="fmp")
-            for row in data.payload
-        ]
-        rows.sort(key=lambda row: row.period_ending, reverse=True)
+        bundles = statement_bundles(FMPBalanceSheetData, data.payload)
+        bundles.sort(key=lambda bundle: bundle.row.period_ending, reverse=True)
+        rows = [bundle.row for bundle in bundles]
         policy = bind_query_annotation(type(query)).response_policy
         limit = getattr(query, policy.limit_parameter)
         truncated = len(rows) > limit
-        rows = rows[:limit]
+        bundles = bundles[:limit]
+        rows = [bundle.row for bundle in bundles]
         metadata = _balance_metadata(query, rows, data.retrieved_at, truncated)
+        metadata = with_statement_provenance(metadata, query, bundles)
         return AnnotatedResult(result=rows, metadata=metadata.as_metadata())
 
 

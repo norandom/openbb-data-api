@@ -147,10 +147,18 @@ class FMPCashFlowStatementData(CashFlowStatementData):
                     values[legacy] = values[current]
         return values
 
+    fiscal_period: str | None = Field(
+        default=None, description="Reported fiscal label; actual flow duration is unverified."
+    )
+
     fiscal_year: int | None = Field(
         default=None,
         description="The fiscal year of the fiscal period.",
     )
+    period_ending: dateType = Field(
+        description="Supplied statement end date; this does not establish a flow start or duration."
+    )
+
     filing_date: dateType | None = Field(
         default=None,
         description="The date of the filing.",
@@ -308,7 +316,7 @@ class FMPCashFlowStatementData(CashFlowStatementData):
     )
     cash_at_beginning_of_period: int | None = Field(
         default=None,
-        description="Cash at beginning of period.",
+        description="Cash at beginning of period; its as-of date is unavailable.",
     )
     cash_at_end_of_period: int | None = Field(
         default=None,

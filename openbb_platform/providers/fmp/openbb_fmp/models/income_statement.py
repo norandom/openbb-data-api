@@ -20,13 +20,13 @@ from openbb_core.provider.standard_models.financial_metadata import (
 from openbb_core.provider.standard_models.income_statement import (
     IncomeStatementQueryParams,
 )
-from openbb_core.provider.utils.descriptions import QUERY_DESCRIPTIONS
 from openbb_core.provider.utils.financial_validation import validate_financial_result
 from pydantic import Field, field_validator
 
 from openbb_fmp.models.income_statement_data import FMPIncomeStatementData
 from openbb_fmp.utils.definitions import FinancialStatementPeriods
 from openbb_fmp.utils.helpers import FMPAcquisition
+from openbb_fmp.utils.statement_provenance import statement_bundles, with_statement_provenance
 
 
 class FMPIncomeStatementQueryParams(IncomeStatementQueryParams):
@@ -57,7 +57,7 @@ class FMPIncomeStatementQueryParams(IncomeStatementQueryParams):
 
     period: FinancialStatementPeriods = Field(
         default="annual",
-        description=QUERY_DESCRIPTIONS.get("period", ""),
+        description="Requested statement frequency or selector; fiscal labels do not verify flow duration.",
     )
 
 
@@ -103,16 +103,23 @@ class FMPIncomeStatementFetcher(
         query: FMPIncomeStatementQueryParams, data: FMPAcquisition, **kwargs: Any
     ) -> AnnotatedResult[list[FMPIncomeStatementData]]:
         """Return the transformed data."""
-        rows = [validate_financial_result(FMPIncomeStatementData, d, provider="fmp")
-                for d in data.payload]
+        if query.period in {"annual", "quarter"}:
+            bundles = statement_bundles(FMPIncomeStatementData, data.payload)
+            rows = [bundle.row for bundle in bundles]
+        else:
+            bundles = None
+            rows = [validate_financial_result(FMPIncomeStatementData, d, provider="fmp")
+                    for d in data.payload]
         metadata = _income_metadata(query, rows, data.retrieved_at, len(data.payload))
+        if bundles is not None:
+            metadata = with_statement_provenance(metadata, query, bundles)
         return AnnotatedResult(result=rows, metadata=metadata.as_metadata())
 
 
 def _income_metadata(query, rows, retrieved_at, observed):
     """Retain reported fiscal dates and row currencies without asserting vintage safety."""
     fields = render_field_templates(FMPIncomeStatementData)
-    basis = {"annual": "annual", "quarter": "discrete_quarter", "ttm": "trailing_twelve_months"}.get(query.period)
+    basis = {"ttm": "trailing_twelve_months"}.get(query.period)
     for name, field in fields.items():
         field.period_basis = basis
         field.availability = (

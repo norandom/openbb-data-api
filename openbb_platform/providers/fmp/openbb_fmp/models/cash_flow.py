@@ -20,17 +20,17 @@ from openbb_core.provider.standard_models.financial_metadata import (
 )
 from openbb_core.provider.utils.financial_validation import (
     validate_financial_query,
-    validate_financial_result,
 )
 from pydantic import Field, field_validator
 
 from openbb_fmp.models.cash_flow_data import FMPCashFlowStatementData
 from openbb_fmp.utils.definitions import validate_statement_query
 from openbb_fmp.utils.helpers import FMPAcquisition
+from openbb_fmp.utils.statement_provenance import statement_bundles, with_statement_provenance
 
 
 class FMPCashFlowStatementQueryParams(CashFlowStatementQueryParams):
-    """One symbol and one annual or discrete-quarter reporting basis."""
+    """One symbol and one requested annual or quarterly frequency."""
 
     financial_query_annotation: ClassVar[FinancialQueryAnnotation] = FinancialQueryAnnotation(
         provider_policy="explicit",
@@ -39,7 +39,7 @@ class FMPCashFlowStatementQueryParams(CashFlowStatementQueryParams):
     )
 
     period: Literal["annual", "quarter"] = Field(
-        default="annual", description="Annual or discrete quarterly statements; TTM unsupported."
+        default="annual", description="Requested annual or quarterly statements; actual flow coverage is unverified. TTM unsupported."
     )
     limit: int = Field(default=5, ge=1, le=1000, description="Maximum statement rows, 1 to 1000.")
 
@@ -85,28 +85,23 @@ class FMPCashFlowStatementFetcher(
     @staticmethod
     def transform_data(query, data: FMPAcquisition, **kwargs: Any) -> AnnotatedResult[list[FMPCashFlowStatementData]]:
         """Sort newest first; retain duplicate observations in provider order."""
-        rows = [validate_financial_result(FMPCashFlowStatementData, item, provider="fmp")
-                for item in data.payload]
-        rows.sort(key=lambda row: row.period_ending, reverse=True)
-        observed = len(rows)
+        bundles = statement_bundles(FMPCashFlowStatementData, data.payload)
+        bundles.sort(key=lambda bundle: bundle.row.period_ending, reverse=True)
+        observed = len(bundles)
         policy = bind_query_annotation(type(query)).response_policy
-        rows = rows[:getattr(query, policy.limit_parameter)]
+        bundles = bundles[:getattr(query, policy.limit_parameter)]
+        rows = [bundle.row for bundle in bundles]
         metadata = _cash_metadata(query, rows, data.retrieved_at, observed)
+        metadata = with_statement_provenance(metadata, query, bundles)
         return AnnotatedResult(result=rows, metadata=metadata.as_metadata())
 
 
 def _cash_fields(query, rows):
     """Currency varies by row; provider totals keep their declared cash basis unknown."""
-    periods = {row.fiscal_period for row in rows}
-    basis = None
-    if periods and periods <= {"FY"}:
-        basis = "annual"
-    elif periods and periods <= {"Q1", "Q2", "Q3", "Q4"}:
-        basis = "discrete_quarter"
     fields = render_field_templates(FMPCashFlowStatementData)
     for name, field in fields.items():
         if field.period_basis != "instant":
-            field.period_basis = basis
+            field.period_basis = None
         field.availability = (
             "available" if any(getattr(row, name) is not None for row in rows) else "missing"
         )
@@ -131,7 +126,7 @@ def _cash_metadata(query, rows, retrieved_at, observed):
             "Beginning cash is an instant stock whose observation date is unavailable; no period-start date is inferred.",
             "Provider operating/free cash-flow definitions are unavailable; no local cash conversion is inferred.",
             "Quarter requests preserve provider periods without deriving quarters from year-to-date amounts.",
-            "Unknown or mixed fiscal-period labels leave the common period basis unknown.",
+            "Fiscal-period labels do not verify flow duration; the common flow basis remains unknown.",
             "Filing dates do not establish point-in-time availability; historical completeness is unknown.",
             "Rows are ordered newest first; duplicates retain provider order and count toward the limit.",
         ],
