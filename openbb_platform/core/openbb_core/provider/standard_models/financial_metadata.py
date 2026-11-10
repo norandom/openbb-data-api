@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
+
+from openbb_core.provider.standard_models.statement_provenance import StatementProvenance
 
 FINANCIAL_METADATA_KEY = "__qopenbb_financial__"
 Identifier = Annotated[str, Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_./-]+$")]
@@ -155,6 +157,32 @@ class FinancialResultMetadata(FinancialMetadataModel):
     observation_provenance: dict[str, dict[str, dict[Literal[
         "realtime_start", "realtime_end"
     ], str | None]]] = Field(default_factory=dict)
+
+    statement_provenance: StatementProvenance | None = None
+
+    @model_validator(mode="after")
+    def statement_evidence(self):
+        """Validate public convention references at the financial envelope boundary."""
+        if self.statement_provenance is not None:
+            if len(self.statement_provenance.rows) != self.bounds.returned_count:
+                raise ValueError("Statement provenance count must match returned count")
+            for row in self.statement_provenance.rows:
+                if "period" in self.effective_query and row.requested_frequency != self.effective_query["period"]:
+                    raise ValueError("Statement frequency must match the validated query")
+                for name in row.instant_dates:
+                    if name not in self.fields or self.fields[name].period_basis != "instant":
+                        raise ValueError("Instant dates require declared instant financial fields")
+                for convention in row.conventions:
+                    FinancialSource(documentation=convention.documentation)
+        return self
+
+    @model_serializer(mode="wrap")
+    def omit_absent_statement(self, handler):
+        """Preserve legacy null fields while omitting the absent extension only."""
+        result = handler(self)
+        if self.statement_provenance is None:
+            result.pop("statement_provenance", None)
+        return result
 
     @field_validator("retrieved_at")
     @classmethod
