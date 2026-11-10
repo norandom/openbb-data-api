@@ -62,10 +62,14 @@ class FMPCashFlowStatementFetcher(
     @staticmethod
     def transform_query(params: dict[str, Any]) -> FMPCashFlowStatementQueryParams:
         """Validate bounds before transport without retaining unsafe input errors."""
+        # Native standard queries serialize an omitted optional limit as None.
+        limit = params.get("limit")
+        if limit is None:
+            limit = FMPCashFlowStatementQueryParams.model_fields["limit"].default
         bounded = validate_statement_query(
             params.get("symbol"),
             params.get("period", FMPCashFlowStatementQueryParams.model_fields["period"].default),
-            params.get("limit", FMPCashFlowStatementQueryParams.model_fields["limit"].default)
+            limit,
         )
         return validate_financial_query(
             FMPCashFlowStatementQueryParams,

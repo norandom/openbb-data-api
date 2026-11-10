@@ -63,10 +63,14 @@ class FMPBalanceSheetFetcher(
     @staticmethod
     def transform_query(params: dict[str, Any]) -> FMPBalanceSheetQueryParams:
         """Reject invalid query inputs before the acquisition boundary."""
+        # Native standard queries serialize an omitted optional limit as None.
+        limit = params.get("limit")
+        if limit is None:
+            limit = FMPBalanceSheetQueryParams.model_fields["limit"].default
         bounded = validate_statement_query(
             params.get("symbol"),
             params.get("period", FMPBalanceSheetQueryParams.model_fields["period"].default),
-            params.get("limit", FMPBalanceSheetQueryParams.model_fields["limit"].default)
+            limit,
         )
         return validate_financial_query(
             FMPBalanceSheetQueryParams,
