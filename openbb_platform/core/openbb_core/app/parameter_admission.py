@@ -8,8 +8,10 @@ from pydantic import AliasChoices, ValidationError
 
 from openbb_core.app.provider_interface import ProviderInterface
 from openbb_core.app.static.utils.admission_context import (
+    FRAME,
     AdmissionFrame,
     InvalidParameters,
+    owner,
 )
 
 
@@ -149,6 +151,7 @@ def activate(frame, provider):
         supplied_values(frame, frame.raw)
     else:
         frame.raw.clear()
+        frame.normalized.clear()
 
 
 def supplied(frame, func, args, kwargs):
@@ -158,6 +161,7 @@ def supplied(frame, func, args, kwargs):
 
 def supplied_values(frame, values):
     """Check a captured invocation without coercion or default insertion."""
+    frame.normalized.clear()
     names = accepted_names(frame.query)
     financial = {}
     seen = set()
@@ -177,8 +181,9 @@ def supplied_values(frame, values):
         info.is_required() and name not in seen
         for name, info in frame.query.model_fields.items()
     )
+    validated = None
     try:
-        frame.query.model_validate(financial)
+        validated = frame.query.model_validate(financial)
     except ValidationError as error:
         if any(
             item["type"] != "missing" and (item["loc"] or not required_absent)
@@ -186,6 +191,8 @@ def supplied_values(frame, values):
         ):
             raise InvalidParameters() from None
     frame.raw = financial
+    if validated is not None:
+        frame.normalized = {name: deepcopy(getattr(validated, name)) for name in seen}
 
 
 def effective(frame, kwargs, defaults):
@@ -218,3 +225,37 @@ def effective(frame, kwargs, defaults):
         key: value for key, value in validated.items() if key not in standard
     }
     frame.raw.clear()
+
+
+def project_supplied(kwargs):
+    """Project successful supplied normalization before native choice filtering."""
+    frame = FRAME.get()
+    if frame is None or frame.kind != "strict":
+        return kwargs
+    registered = ProviderInterface()._registry_map.original_models
+    query = registered.get(frame.model, {}).get(frame.provider, {}).get("query")
+    if (
+        frame.owner != owner()
+        or not frame.pinned
+        or frame.consumed
+        or frame.executing
+        or kwargs.get("provider_choices", {}).get("provider") != frame.provider
+        or query is not frame.query
+        or not opted_in(query, frame.provider)
+        or frame.container._command_runner.command_map.commands_model.get(frame.route)
+        != frame.model
+    ):
+        raise InvalidParameters() from None
+    result = dict(kwargs)
+    names = accepted_names(frame.query)
+    for category in ("standard_params", "extra_params"):
+        if category not in result:
+            continue
+        params = deepcopy(result[category])
+        for key in params:
+            canonical = names.get(key)
+            if canonical in frame.normalized:
+                params[key] = deepcopy(frame.normalized[canonical])
+        result[category] = params
+    frame.normalized.clear()
+    return result

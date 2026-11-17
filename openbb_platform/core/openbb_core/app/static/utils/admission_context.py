@@ -38,6 +38,7 @@ class AdmissionFrame:
     priorities: tuple
     raw: dict
     controls: frozenset
+    normalized: dict = field(default_factory=dict)
     kind: str = "strict"
     invocation: object = field(default_factory=object)
     owner: tuple = field(default_factory=owner)

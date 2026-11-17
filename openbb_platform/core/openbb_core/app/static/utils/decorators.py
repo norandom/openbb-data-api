@@ -70,7 +70,9 @@ def _ordinary_call(native, args, kwargs):
         result = native(*args, **kwargs)
     finally:
         FRAME.reset(token)
-    return _ordinary_async(result) if outer is not None and isawaitable(result) else result
+    return (
+        _ordinary_async(result) if outer is not None and isawaitable(result) else result
+    )
 
 
 async def _ordinary_async(result):
@@ -95,6 +97,7 @@ def _selected_call(frame, func, native, args, kwargs):
         raise InvalidParameters() from None
     finally:
         frame.raw.clear()
+        frame.normalized.clear()
         FRAME.reset(token)
 
 
@@ -112,6 +115,7 @@ async def _selected_async_call(frame, func, native, args, kwargs):
         raise InvalidParameters() from None
     finally:
         frame.raw.clear()
+        frame.normalized.clear()
         FRAME.reset(token)
 
 

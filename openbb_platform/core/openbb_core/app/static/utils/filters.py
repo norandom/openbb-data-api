@@ -3,6 +3,7 @@
 from typing import Any
 
 from openbb_core.app.model.abstract.error import OpenBBError
+from openbb_core.app.parameter_admission import project_supplied
 from openbb_core.app.utils import check_single_item, convert_to_basemodel
 
 
@@ -12,6 +13,7 @@ def filter_inputs(
     **kwargs,
 ) -> dict:
     """Filter command inputs."""
+    kwargs = project_supplied(kwargs)
     for key, value in kwargs.items():
         if not data_processing:
             continue
