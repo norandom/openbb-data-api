@@ -18,7 +18,7 @@ class FMPAcquisition:
     retrieved_at: datetime
 
 
-async def response_callback(response, _, *, typed=False):
+async def response_callback(response, _, *, typed=False, allow_empty: bool = False):
     """Classify protocol and legacy payload failures without exposing their text."""
     from openbb_fmp.utils.errors import classify, fail
 
@@ -46,7 +46,7 @@ async def response_callback(response, _, *, typed=False):
                 typed=typed,
                 retry_after=getattr(response, "headers", {}).get("Retry-After"),
             )
-    if data == [] or data == {} or data is None:
+    if (data == [] and not allow_empty) or data == {} or data is None:
         fail("missing_data", typed=typed)
     if not isinstance(data, (list, dict)) or (
         isinstance(data, list) and any(not isinstance(row, dict) for row in data)
@@ -55,7 +55,10 @@ async def response_callback(response, _, *, typed=False):
     return data
 
 
-async def get_data(url: str, *, with_provenance=False, typed_errors=None, **kwargs: Any):
+async def get_data(
+    url: str, *, with_provenance=False, typed_errors=None,
+    allow_empty: bool = False, **kwargs: Any,
+):
     """Get data; error mode defaults to provenance unless explicitly overridden."""
     # pylint: disable=import-outside-toplevel
     from aiohttp import ClientConnectionError
@@ -67,7 +70,7 @@ async def get_data(url: str, *, with_provenance=False, typed_errors=None, **kwar
     typed = with_provenance if typed_errors is None else typed_errors
 
     async def callback(response, session):
-        return await response_callback(response, session, typed=typed)
+        return await response_callback(response, session, typed=typed, allow_empty=allow_empty)
 
     try:
         data = await amake_request(url, response_callback=callback, **kwargs)
@@ -152,7 +155,7 @@ def create_url(
 
 
 async def get_data_many(
-    url: str, sub_dict: str | None = None, **kwargs: Any
+    url: str, sub_dict: str | None = None, *, allow_empty: bool = False, **kwargs: Any
 ) -> list[dict] | FMPAcquisition:
     """Get data from FMP endpoint and convert to list of schemas.
 
@@ -168,16 +171,18 @@ async def get_data_many(
     list[dict]
         Dictionary of data.
     """
-    acquired = await get_data(url, **kwargs)
+    acquired = await get_data(url, allow_empty=allow_empty, **kwargs)
     data = acquired.payload if isinstance(acquired, FMPAcquisition) else acquired
 
     if sub_dict and isinstance(data, dict):
+        # Only the original top-level array may opt into successful emptiness.
         data = data.get(sub_dict, [])
+        allow_empty = False
     from openbb_fmp.utils.errors import fail
 
     if not isinstance(data, list) or any(not isinstance(row, dict) for row in data):
         fail("invalid_response", typed=kwargs.get("with_provenance", False) if kwargs.get("typed_errors") is None else kwargs["typed_errors"])
-    if len(data) == 0:
+    if len(data) == 0 and not allow_empty:
         fail("missing_data", typed=kwargs.get("with_provenance", False) if kwargs.get("typed_errors") is None else kwargs["typed_errors"])
 
     return (
