@@ -1230,11 +1230,11 @@ class MethodDefinition:
         func_returns = MethodDefinition.build_func_returns(return_type)
 
         args = (
-            '(config={"arbitrary_types_allowed": True})'
+            f'(_command_path={path!r}, config={{"arbitrary_types_allowed": True}})'
             if "DataFrame" in func_params
             or "Series" in func_params
             or "ndarray" in func_params
-            else ""
+            else f"(_command_path={path!r})"
         )
 
         code = ""

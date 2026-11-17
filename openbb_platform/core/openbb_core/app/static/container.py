@@ -3,6 +3,12 @@
 from typing import TYPE_CHECKING, Any
 
 from openbb_core.app.model.abstract.error import OpenBBError
+from openbb_core.app.parameter_admission import activate, effective
+from openbb_core.app.static.utils.admission_context import (
+    FRAME,
+    consume,
+    matching_selection,
+)
 
 if TYPE_CHECKING:
     from openbb_core.app.command_runner import CommandRunner
@@ -21,10 +27,16 @@ class Container:
 
     def _run(self, *args, **kwargs) -> Any:
         """Run a command in the container."""
+        frame = (
+            consume(self, args[0], kwargs.get("provider_choices", {}).get("provider"))
+            if args
+            else None
+        )
         endpoint = args[0][1:].replace("/", ".") if args else ""
         defaults = self._command_runner.user_settings.defaults.commands
 
-        if endpoint and defaults and defaults.get(endpoint):
+        strict = frame is not None and frame.kind == "strict"
+        if not strict and endpoint and defaults and defaults.get(endpoint):
             default_params = {
                 k: v for k, v in defaults[endpoint].items() if k != "provider"
             }
@@ -41,7 +53,20 @@ class Container:
                 ) or k not in kwargs["extra_params"]:
                     kwargs["extra_params"][k] = v
 
-        obbject = self._command_runner.sync_run(*args, **kwargs)
+        if strict:
+            configured = defaults.get(endpoint, {}) if defaults else {}
+            effective(frame, kwargs, configured)
+            if configured.get("chart") is True and "chart" in frame.controls:
+                kwargs["chart"] = True
+        if frame is not None:
+            frame.raw.clear()
+            frame.executing = True
+        token = FRAME.set(None) if frame is not None else None
+        try:
+            obbject = self._command_runner.sync_run(*args, **kwargs)
+        finally:
+            if token is not None:
+                FRAME.reset(token)
 
         if not hasattr(obbject, "_results_only") and hasattr(obbject, "body_iterator"):
             from openbb_core.app.model.stream import OBBStream
@@ -100,6 +125,19 @@ class Container:
         OpenBBError
             Raises error when all the providers in the priority list failed.
         """
+        frame = matching_selection(self, choice, command, default_priority)
+        token = FRAME.set(None) if frame is not None else None
+        try:
+            provider = self._resolve_provider(choice, command, default_priority)
+        finally:
+            if token is not None:
+                FRAME.reset(token)
+        if frame is not None:
+            activate(frame, provider)
+        return provider
+
+    def _resolve_provider(self, choice, command, default_priority):
+        """Preserve native explicit/default/credential resolution in one place."""
         if choice is None:
             commands = self._command_runner.user_settings.defaults.commands
             providers = (
