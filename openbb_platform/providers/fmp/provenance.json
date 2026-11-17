@@ -22,9 +22,10 @@
     "utils/definitions.py: retain only FinancialStatementPeriods literal used by income model",
     "models/equity_profile.py: selected core profile route fixture adaptation; preserve missing flags and stable financial/currency fields",
     "models/income_statement.py: installed annual route fixture verification and encoded query adaptation",
-    "utils/helpers.py and utils/errors.py: explicit provider failure categories with fixed credential-safe messages; profile uses the shared FMP request boundary"
+    "utils/helpers.py and utils/errors.py: explicit provider failure categories with fixed credential-safe messages; profile uses the shared FMP request boundary",
+    "provider.py: register eleven independently reviewed Batch A adapters alongside the unchanged ten baseline models; credentials and entry-point identity retained"
   ],
-  "runtime_compatibility": "Existing profile/income fixture acceptance retained. First-batch registration joins accepted source adapters; service discovery/policy installation, regenerated consumers and live entitlement remain separate acceptance steps.",
+  "runtime_compatibility": "Existing profile/income fixture acceptance retained. First-batch registration joins accepted source adapters; service discovery/policy installation, regenerated consumers and live entitlement remain separate acceptance steps. Batch A registration is offline only; actual source-loaded registry/route checks do not establish packaged-image, live account entitlement or consumer acceptance.",
   "adapted_files": {
     "openbb_fmp/models/equity_profile.py": {
       "archive_sha256": "36eb9192978e9114fe0c05c7a790aeff87c2c10537a794c1b4a2f08e8e43b0de",
@@ -40,6 +41,93 @@
       "archive_sha256": "55cdabd7328f9b8e8e16ba8f1df7349261f799a8302fdea606ba1542d079c9d2",
       "task": "3.4",
       "changes": "Safe HTTP and payload categories; sanitized transport boundary for maintained routes"
+    },
+    "openbb_fmp/models/analyst_estimates.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/analyst_estimates.py",
+      "archive_sha256": "d64866a7cdb4719c8c61c7f10f81da919cc9e69b8f85c02af4a7e88840d7c626",
+      "task": "3.1",
+      "changes": "Reviewed Batch A strict query admission, typed acquisition, financial row validation and endpoint-specific transformation; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/price_target.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/price_target.py",
+      "archive_sha256": "ed03eb37a82fd6c3b413c6dc99c8f02417b25fca7afcb4507daebe96b63a22df",
+      "task": "3.2",
+      "changes": "Reviewed Batch A strict query admission, typed acquisition, financial row validation and endpoint-specific transformation; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/price_target_consensus.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/price_target_consensus.py",
+      "archive_sha256": "e2cb2c40609d96f7358096b6f690acdff576268827cb6ec09ec88bc34a06e14e",
+      "task": "3.3",
+      "changes": "Reviewed Batch A strict query admission, typed acquisition, financial row validation and endpoint-specific transformation; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/revenue_business_line.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/revenue_business_line.py",
+      "archive_sha256": "b30886d058e7556d7a2ce6211a677faec9e79273774a3352f1066cfa4f1c9b4b",
+      "task": "3.4",
+      "changes": "Reviewed Batch A strict query admission, typed acquisition, financial row validation and endpoint-specific transformation; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/revenue_geographic.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/revenue_geographic.py",
+      "archive_sha256": "7b96b026784b778977b1ef2d525613794c0ec53d39082b02de469b3052607c5f",
+      "task": "3.5",
+      "changes": "Reviewed Batch A strict query admission, typed acquisition, financial row validation and endpoint-specific transformation; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/historical_market_cap.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/historical_market_cap.py",
+      "archive_sha256": "e7ec73eca3471259207b5567f15d42b0d929d41c22bd7ed423f676c5818951ff",
+      "task": "3.6",
+      "changes": "Reviewed Batch A strict query admission, typed acquisition, financial row validation and endpoint-specific transformation; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/share_statistics.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/share_statistics.py",
+      "archive_sha256": "529f6cdf6e2e07edad94f9b23740793b36b39052444d0c63bc7127d616c63bf6",
+      "task": "3.7",
+      "changes": "Reviewed Batch A strict query admission, typed acquisition, financial row validation and endpoint-specific transformation; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/equity_quote.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/equity_quote.py",
+      "archive_sha256": "8329b1cdcc92ed4794b925640081ae34e093a71979503577fe65b486e813cfef",
+      "task": "3.8",
+      "changes": "Reviewed Batch A strict query admission, typed acquisition, financial row validation and endpoint-specific transformation; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/income_statement_growth.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/income_statement_growth.py",
+      "archive_sha256": "10a662a63ff4781993815f083b5a074a0a5858eea64087b2d11a49afb68cf9d2",
+      "task": "3.9",
+      "changes": "Reviewed Batch A strict query admission, typed acquisition, financial row validation and endpoint-specific transformation; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/income_statement_growth_data.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/income_statement_growth.py",
+      "archive_sha256": "10a662a63ff4781993815f083b5a074a0a5858eea64087b2d11a49afb68cf9d2",
+      "task": "3.9",
+      "changes": "Cohesive financial Data declaration extracted from the retained main archive member; no separate archive member exists",
+      "derived_from": "openbb_fmp/models/income_statement_growth.py"
+    },
+    "openbb_fmp/models/balance_sheet_growth.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/balance_sheet_growth.py",
+      "archive_sha256": "fb9f08cfa2721f97dedee402abff4bdef968d8c6e1d55baff9dc0d5f663c75a0",
+      "task": "3.10",
+      "changes": "Reviewed Batch A strict query admission, typed acquisition, financial row validation and endpoint-specific transformation; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/balance_sheet_growth_data.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/balance_sheet_growth.py",
+      "archive_sha256": "fb9f08cfa2721f97dedee402abff4bdef968d8c6e1d55baff9dc0d5f663c75a0",
+      "task": "3.10",
+      "changes": "Cohesive financial Data declaration extracted from the retained main archive member; no separate archive member exists",
+      "derived_from": "openbb_fmp/models/balance_sheet_growth.py"
+    },
+    "openbb_fmp/models/cash_flow_growth.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/cash_flow_growth.py",
+      "archive_sha256": "b1fd6e773908f80e0c8b3400dfa679127a75ac074bba635ebb988d1c05c9ae03",
+      "task": "3.11",
+      "changes": "Reviewed Batch A strict query admission, typed acquisition, financial row validation and endpoint-specific transformation; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/cash_flow_growth_data.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/cash_flow_growth.py",
+      "archive_sha256": "b1fd6e773908f80e0c8b3400dfa679127a75ac074bba635ebb988d1c05c9ae03",
+      "task": "3.11",
+      "changes": "Cohesive financial Data declaration extracted from the retained main archive member; no separate archive member exists",
+      "derived_from": "openbb_fmp/models/cash_flow_growth.py"
     }
   }
 }
