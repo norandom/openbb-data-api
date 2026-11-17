@@ -101,7 +101,7 @@ class FMPCashFlowStatementGrowthFetcher(
         params = query.model_dump()
         params["apikey"] = credentials.get("fmp_api_key", "") if credentials else ""
         return await get_data_many(
-            "https://financialmodelingprep.com/stable/cashflow-statement-growth?"
+            "https://financialmodelingprep.com/stable/cash-flow-statement-growth?"
             + urlencode(params),
             allow_empty=True,
             with_provenance=True,
@@ -145,7 +145,7 @@ def _metadata(query, rows, data, limit, truncated):
         provider="fmp",
         retrieved_at=data.retrieved_at,
         source=FinancialSource(
-            endpoint="cashflow-statement-growth",
+            endpoint="cash-flow-statement-growth",
             documentation="https://site.financialmodelingprep.com/developer/docs/stable/cashflow-statement-growth",
         ),
         effective_query=query.model_dump(),
