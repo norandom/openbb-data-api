@@ -23,9 +23,10 @@
     "models/equity_profile.py: selected core profile route fixture adaptation; preserve missing flags and stable financial/currency fields",
     "models/income_statement.py: installed annual route fixture verification and encoded query adaptation",
     "utils/helpers.py and utils/errors.py: explicit provider failure categories with fixed credential-safe messages; profile uses the shared FMP request boundary",
-    "provider.py: register eleven independently reviewed Batch A adapters alongside the unchanged ten baseline models; credentials and entry-point identity retained"
+    "provider.py: register eleven independently reviewed Batch A adapters alongside the unchanged ten baseline models; credentials and entry-point identity retained",
+    "provider.py: register eight independently reviewed Batch B adapters alongside the unchanged 21 baseline and Batch A identities; retain credentials and entry-point identity"
   ],
-  "runtime_compatibility": "Existing profile/income fixture acceptance retained. First-batch registration joins accepted source adapters; service discovery/policy installation, regenerated consumers and live entitlement remain separate acceptance steps. Batch A registration is offline only; actual source-loaded registry/route checks do not establish packaged-image, live account entitlement or consumer acceptance.",
+  "runtime_compatibility": "Existing profile/income fixture acceptance retained. First-batch registration joins accepted source adapters; service discovery/policy installation, regenerated consumers and live entitlement remain separate acceptance steps. Batch A registration is offline only; actual source-loaded registry/route checks do not establish packaged-image, live account entitlement or consumer acceptance. Batch B registry join is offline only; installed model/route/annotation verification does not establish live entitlement, packaged-image or consumer acceptance.",
   "adapted_files": {
     "openbb_fmp/models/equity_profile.py": {
       "archive_sha256": "36eb9192978e9114fe0c05c7a790aeff87c2c10537a794c1b4a2f08e8e43b0de",
@@ -128,6 +129,62 @@
       "task": "3.11",
       "changes": "Cohesive financial Data declaration extracted from the retained main archive member; no separate archive member exists",
       "derived_from": "openbb_fmp/models/cash_flow_growth.py"
+    },
+    "openbb_fmp/models/historical_dividends.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/historical_dividends.py",
+      "archive_sha256": "88dd04a6d4945b655a824e8f3c7d38f3cfd506a2243dfc9fb2ab7c97842eb12b",
+      "task": "3.1",
+      "batch": "B",
+      "changes": "Reviewed Batch B strict query and financial result semantics; one bounded stable acquisition; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/historical_splits.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/historical_splits.py",
+      "archive_sha256": "070a03e8ee634c41743eb2e0da179af404a28fdaaf83ad214c0b98f4631011f5",
+      "task": "3.2",
+      "batch": "B",
+      "changes": "Reviewed Batch B strict query and financial result semantics; one bounded stable acquisition; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/calendar_earnings.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/calendar_earnings.py",
+      "archive_sha256": "c14722cd521d58bfca3e730ce04e622cb932f735538e86085f7c092da345f7fc",
+      "task": "3.3",
+      "batch": "B",
+      "changes": "Reviewed Batch B strict query and financial result semantics; one bounded stable acquisition; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/calendar_dividend.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/calendar_dividend.py",
+      "archive_sha256": "caaedd4e33a107b5ba6328f6d74a386b3fb27d32b5d4fa9df5f1a61968d8935c",
+      "task": "3.4",
+      "batch": "B",
+      "changes": "Reviewed Batch B strict query and financial result semantics; one bounded stable acquisition; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/calendar_splits.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/calendar_splits.py",
+      "archive_sha256": "3354ebf3b4669bdde75c7e3996b3c1c8776b564866bdc695bd0eda2eb84c8138",
+      "task": "3.5",
+      "batch": "B",
+      "changes": "Reviewed Batch B strict query and financial result semantics; one bounded stable acquisition; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/company_news.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/company_news.py",
+      "archive_sha256": "9359dd750effb8a2f104922c4c9b592c3c5efaf788616170ea0a93df1bef34e1",
+      "task": "3.6",
+      "batch": "B",
+      "changes": "Reviewed Batch B strict query and financial result semantics; one bounded stable acquisition; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/earnings_call_transcript.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/earnings_call_transcript.py",
+      "archive_sha256": "2595d0fb54ca6134aef8295fde59222681871b4ea871fae63b0def2bcf823131",
+      "task": "3.7",
+      "batch": "B",
+      "changes": "Reviewed Batch B strict query and financial result semantics; one bounded stable acquisition; offline fixtures accepted, live entitlement pending"
+    },
+    "openbb_fmp/models/company_filings.py": {
+      "archive_member": "openbb_fmp-1.6.1/openbb_fmp/models/company_filings.py",
+      "archive_sha256": "ab4c77778d5bfabdbbefd2b404b72b1e2e74d86d0b1521a2aaf5f10cf8c8fdf6",
+      "task": "3.8",
+      "batch": "B",
+      "changes": "Reviewed Batch B strict query and financial result semantics; one bounded stable acquisition; offline fixtures accepted, live entitlement pending"
     }
   }
 }
