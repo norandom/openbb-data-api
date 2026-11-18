@@ -8,6 +8,7 @@ from openbb_core.app.model.abstract.error import OpenBBError
 from openbb_core.provider.abstract.fetcher import Fetcher
 from openbb_core.provider.abstract.provider import Provider
 from openbb_core.provider.registry import Registry, RegistryLoader
+from openbb_core.provider.utils.financial_errors import FinancialError
 
 
 class QueryExecutor:
@@ -52,6 +53,8 @@ class QueryExecutor:
                 secret = v.get_secret_value() if v else None
                 if c not in credentials or not secret:
                     if require_credentials:
+                        if provider.name == "fmp":
+                            raise FinancialError("authentication", provider="fmp")
                         website = provider.website or ""
                         extra_msg = f" Check {website} to get it." if website else ""
                         raise OpenBBError(

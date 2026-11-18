@@ -18,6 +18,11 @@ from openbb_core.app.static.utils.admission_context import (
 )
 from openbb_core.env import Env
 from openbb_core.provider.utils.errors import EmptyDataError, UnauthorizedError
+from openbb_core.provider.utils.financial_errors import (
+    MAX_WRAPPER_DEPTH,
+    FinancialError,
+    normalize_financial_error,
+)
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -132,54 +137,75 @@ def exception_handler(func: Callable[P, R]) -> Callable[P, R]:
             if Env().DEBUG_MODE:
                 raise
 
-            # Get the last traceback object from the exception
-            tb = e.__traceback__
-            if tb:
-                while tb.tb_next is not None:
-                    tb = tb.tb_next
-
-            if isinstance(e, ValidationError):
-                error_list: list = []
-                validation_error = f"{e.error_count()} validations error(s)"
-                for err in e.errors(include_url=False):
-                    loc = ".".join(
-                        [
-                            str(i)
-                            for i in err.get("loc", ())
-                            if i
-                            not in (
-                                "standard_params",
-                                "extra_params",
-                                "provider_choices",
-                            )
-                        ]
-                    )
-                    msg = err.get("msg", "")
-                    _input = (
-                        "..."
-                        if msg == "Missing required argument"
-                        else err.get("input", "")
-                    )
-                    prefix = f"[Data Model] {e.title}\n" if "Data" in e.title else ""
-                    error_list.append(
-                        f"{prefix}[Arg] {loc} -> input: {_input} -> {msg}"
-                    )
-                error_list.insert(0, validation_error)
-                error_str = "\n".join(error_list)
-                raise OpenBBError(f"\n[Error] -> {error_str}").with_traceback(
-                    tb
-                ) from None
-            if isinstance(e, UnauthorizedError):
-                raise UnauthorizedError(f"\n[Error] -> {e}").with_traceback(
-                    tb
-                ) from None
-            if isinstance(e, EmptyDataError):
-                raise EmptyDataError(f"\n[Empty] -> {e}").with_traceback(tb) from None
-            if isinstance(e, OpenBBError):
-                raise OpenBBError(f"\n[Error] -> {e}").with_traceback(tb) from None
-            if isinstance(e, Exception):
-                raise OpenBBError(
-                    f"\n[Unexpected Error] -> {e.__class__.__name__} -> {e}"
-                ).with_traceback(tb) from None
+            safe_error = _safe_financial_error(e)
+            if safe_error is None:
+                _legacy_exception(e)
+        # Raise outside the handler so upstream exception context is not retained.
+        raise safe_error from None
 
     return wrapper
+
+
+def _safe_financial_error(error: Exception) -> FinancialError | None:
+    """Recognize only the bounded native wrapper chain, never error text."""
+    current = error
+    for _ in range(MAX_WRAPPER_DEPTH + 1):
+        if type(current) is FinancialError:
+            return normalize_financial_error(current)
+        if type(current) is not OpenBBError:
+            break
+        current = current.original
+    return None
+
+
+def _legacy_exception(e: Exception) -> None:
+    """Keep native formatting for failures outside the typed financial contract."""
+    # Get the last traceback object from the exception
+    tb = e.__traceback__
+    if tb:
+        while tb.tb_next is not None:
+            tb = tb.tb_next
+
+    if isinstance(e, ValidationError):
+        error_list: list = []
+        validation_error = f"{e.error_count()} validations error(s)"
+        for err in e.errors(include_url=False):
+            loc = ".".join(
+                [
+                    str(i)
+                    for i in err.get("loc", ())
+                    if i
+                    not in (
+                        "standard_params",
+                        "extra_params",
+                        "provider_choices",
+                    )
+                ]
+            )
+            msg = err.get("msg", "")
+            _input = (
+                "..."
+                if msg == "Missing required argument"
+                else err.get("input", "")
+            )
+            prefix = f"[Data Model] {e.title}\n" if "Data" in e.title else ""
+            error_list.append(
+                f"{prefix}[Arg] {loc} -> input: {_input} -> {msg}"
+            )
+        error_list.insert(0, validation_error)
+        error_str = "\n".join(error_list)
+        raise OpenBBError(f"\n[Error] -> {error_str}").with_traceback(
+            tb
+        ) from None
+    if isinstance(e, UnauthorizedError):
+        raise UnauthorizedError(f"\n[Error] -> {e}").with_traceback(
+            tb
+        ) from None
+    if isinstance(e, EmptyDataError):
+        raise EmptyDataError(f"\n[Empty] -> {e}").with_traceback(tb) from None
+    if isinstance(e, OpenBBError):
+        raise OpenBBError(f"\n[Error] -> {e}").with_traceback(tb) from None
+    if isinstance(e, Exception):
+        raise OpenBBError(
+            f"\n[Unexpected Error] -> {e.__class__.__name__} -> {e}"
+        ).with_traceback(tb) from None
