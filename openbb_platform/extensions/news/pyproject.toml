@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.entry-points."openbb_core_extension"]
-news = "openbb_news.router:router"
+news = "openbb_news:router"
 
 [project.urls]
 Homepage = "https://openbb.co"
