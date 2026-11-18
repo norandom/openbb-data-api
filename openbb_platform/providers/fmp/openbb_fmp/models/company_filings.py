@@ -233,6 +233,12 @@ def _row(raw: Any, query: FMPCompanyFilingsQueryParams) -> FMPCompanyFilingsData
     if not isinstance(identity, str) or identity.upper() != query.symbol:
         raise FinancialError("invalid_response", provider="fmp")
     mapped = {name: raw[source] for name, source in _ORIGINS.items() if source in raw}
+    filing_date = mapped.get("filing_date")
+    # FMP pads its civil filing date with midnight; this is not an acceptance clock.
+    if isinstance(filing_date, str) and re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2} 00:00:00", filing_date
+    ):
+        mapped["filing_date"] = filing_date[:10]
     mapped.update(symbol=query.symbol, content_status="metadata_only")
     return validate_financial_result(FMPCompanyFilingsData, mapped, provider="fmp")
 
