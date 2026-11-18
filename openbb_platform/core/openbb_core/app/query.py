@@ -74,6 +74,18 @@ class Query:
             if self.extra_params
             else {}
         )
+        from openbb_core.app.parameter_admission import opted_in
+        query_type = self.provider_interface._registry_map.original_models.get(
+            self.name, {}
+        ).get(self.provider, {}).get("query")
+        if query_type is not None and opted_in(query_type, self.provider):
+            # Native dependency dataclasses materialize omitted nullable defaults.
+            # Public admission has already rejected explicitly supplied nulls.
+            standard_dict = {
+                key: value for key, value in standard_dict.items()
+                if value is not None or key not in query_type.model_fields
+                or query_type.model_fields[key].default is not None
+            }
         query_executor = self.provider_interface.create_executor()
 
         return await query_executor.execute(
